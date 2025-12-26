@@ -3,223 +3,223 @@ provider "aws" {
 }
 
 # ----------------------------
-# IAM Role for EKS Cluster
+# Data source for existing EKS cluster
+# (You need to create this cluster via AWS Console first)
 # ----------------------------
-resource "aws_iam_role" "master" {
-  name = "yaswanth-eks-master1"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "eks.amazonaws.com"
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
+data "aws_eks_cluster" "aymen_eks" {
+  name = "aymen-eks-cluster"
 }
 
-resource "aws_iam_role_policy_attachment" "AmazonEKSClusterPolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.master.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKSServicePolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
-  role       = aws_iam_role.master.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKSVPCResourceController" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
-  role       = aws_iam_role.master.name
+data "aws_eks_cluster_auth" "aymen_eks_auth" {
+  name = "aymen-eks-cluster"
 }
 
 # ----------------------------
-# IAM Role for Worker Nodes
+# Kubernetes provider configuration
 # ----------------------------
-resource "aws_iam_role" "worker" {
-  name = "yaswanth-eks-worker1"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_policy" "autoscaler" {
-  name = "yaswanth-eks-autoscaler-policy1"
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Action = [
-        "autoscaling:DescribeAutoScalingGroups",
-        "autoscaling:DescribeAutoScalingInstances",
-        "autoscaling:DescribeTags",
-        "autoscaling:DescribeLaunchConfigurations",
-        "autoscaling:SetDesiredCapacity",
-        "autoscaling:TerminateInstanceInAutoScalingGroup",
-        "ec2:DescribeLaunchTemplateVersions"
-      ],
-      Effect   = "Allow",
-      Resource = "*"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKSWorkerNodePolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-  role       = aws_iam_role.worker.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-  role       = aws_iam_role.worker.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonSSMManagedInstanceCore" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-  role       = aws_iam_role.worker.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEC2ContainerRegistryReadOnly" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-  role       = aws_iam_role.worker.name
-}
-
-resource "aws_iam_role_policy_attachment" "S3ReadOnlyAccess" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
-  role       = aws_iam_role.worker.name
-}
-
-resource "aws_iam_role_policy_attachment" "autoscaler" {
-  policy_arn = aws_iam_policy.autoscaler.arn
-  role       = aws_iam_role.worker.name
-}
-
-resource "aws_iam_instance_profile" "worker" {
-  depends_on = [aws_iam_role.worker]
-  name       = "yaswanth-eks-worker-profile1"
-  role       = aws_iam_role.worker.name
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.aymen_eks.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.aymen_eks.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.aymen_eks_auth.token
+  
+  # Optional: Load kubeconfig file
+  config_path = "~/.kube/config"
 }
 
 # ----------------------------
-# VPC and Subnet Data Sources
+# Data source for EKS node groups
 # ----------------------------
-data "aws_vpc" "main" {
-  tags = {
-    Name = "Jumphost-vpc"
+data "aws_eks_node_group" "nodes" {
+  cluster_name    = "aymen-eks-cluster"
+  node_group_name = "aymen-eks-nodes"
+}
+
+# ----------------------------
+# Deploy Kubernetes Namespaces
+# ----------------------------
+resource "kubernetes_namespace" "ecommerce" {
+  metadata {
+    name = "ecommerce"
+    labels = {
+      owner       = "aymen"
+      project     = "ecommerce-microservices"
+      environment = "dev"
+      managed-by  = "terraform"
+    }
   }
 }
 
-data "aws_subnet" "subnet-1" {
-  vpc_id = data.aws_vpc.main.id
-  filter {
-    name   = "tag:Name"
-    values = ["Public-Subnet-1"]
+resource "kubernetes_namespace" "monitoring" {
+  metadata {
+    name = "monitoring"
+    labels = {
+      owner       = "aymen"
+      purpose     = "monitoring"
+      environment = "dev"
+      managed-by  = "terraform"
+    }
   }
 }
 
-data "aws_subnet" "subnet-2" {
-  vpc_id = data.aws_vpc.main.id
-  filter {
-    name   = "tag:Name"
-    values = ["Public-subnet2"]
-  }
-}
-
-data "aws_security_group" "selected" {
-  vpc_id = data.aws_vpc.main.id
-  filter {
-    name   = "tag:Name"
-    values = ["Jumphost-sg"]
+resource "kubernetes_namespace" "argocd" {
+  metadata {
+    name = "argocd"
+    labels = {
+      owner       = "aymen"
+      purpose     = "gitops"
+      environment = "dev"
+      managed-by  = "terraform"
+    }
   }
 }
 
 # ----------------------------
-# EKS Cluster
+# Deploy Sample Microservices
 # ----------------------------
-resource "aws_eks_cluster" "eks" {
-  name     = "project-eks"
-  role_arn = aws_iam_role.master.arn
-
-  vpc_config {
-    subnet_ids         = [data.aws_subnet.subnet-1.id, data.aws_subnet.subnet-2.id]
-    security_group_ids = [data.aws_security_group.selected.id]
+resource "kubernetes_deployment" "frontend" {
+  metadata {
+    name      = "frontend"
+    namespace = kubernetes_namespace.ecommerce.metadata[0].name
+    labels = {
+      app     = "frontend"
+      owner   = "aymen"
+      service = "frontend"
+    }
   }
 
-  tags = {
-    Name        = "yaswanth-eks-cluster"
-    Environment = "dev"
-    Terraform   = "true"
+  spec {
+    replicas = 2
+
+    selector {
+      match_labels = {
+        app = "frontend"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "frontend"
+        }
+      }
+
+      spec {
+        container {
+          image = "nginx:alpine"
+          name  = "frontend"
+
+          port {
+            container_port = 80
+          }
+
+          resources {
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+            requests = {
+              cpu    = "250m"
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "frontend" {
+  metadata {
+    name      = "frontend-service"
+    namespace = kubernetes_namespace.ecommerce.metadata[0].name
+    labels = {
+      app   = "frontend"
+      owner = "aymen"
+    }
   }
 
-  depends_on = [
-    aws_iam_role_policy_attachment.AmazonEKSClusterPolicy,
-    aws_iam_role_policy_attachment.AmazonEKSServicePolicy,
-    aws_iam_role_policy_attachment.AmazonEKSVPCResourceController,
+  spec {
+    selector = {
+      app = "frontend"
+    }
+
+    port {
+      port        = 80
+      target_port = 80
+    }
+
+    type = "ClusterIP"
+  }
+}
+
+# ----------------------------
+# ConfigMap for sample configuration
+# ----------------------------
+resource "kubernetes_config_map" "app_config" {
+  metadata {
+    name      = "app-config"
+    namespace = kubernetes_namespace.ecommerce.metadata[0].name
+    labels = {
+      owner = "aymen"
+    }
+  }
+
+  data = {
+    "app.name"        = "E-Commerce Microservices"
+    "app.owner"       = "aymen"
+    "app.environment" = "dev"
+    "database.host"   = "localhost"
+    "database.port"   = "5432"
+  }
+}
+
+# ----------------------------
+# Outputs
+# ----------------------------
+output "eks_cluster_name" {
+  value       = data.aws_eks_cluster.aymen_eks.name
+  description = "Name of the EKS cluster"
+}
+
+output "eks_cluster_endpoint" {
+  value       = data.aws_eks_cluster.aymen_eks.endpoint
+  description = "Endpoint URL of the EKS cluster"
+}
+
+output "eks_cluster_version" {
+  value       = data.aws_eks_cluster.aymen_eks.version
+  description = "Kubernetes version of the EKS cluster"
+}
+
+output "eks_cluster_status" {
+  value       = data.aws_eks_cluster.aymen_eks.status
+  description = "Status of the EKS cluster"
+}
+
+output "kubeconfig_command" {
+  value       = "aws eks update-kubeconfig --name aymen-eks-cluster --region us-east-1"
+  description = "Command to configure kubectl for this cluster"
+}
+
+output "node_group_status" {
+  value       = data.aws_eks_node_group.nodes.status
+  description = "Status of the EKS node group"
+}
+
+output "namespaces_created" {
+  value = [
+    kubernetes_namespace.ecommerce.metadata[0].name,
+    kubernetes_namespace.monitoring.metadata[0].name,
+    kubernetes_namespace.argocd.metadata[0].name
   ]
+  description = "Names of created Kubernetes namespaces"
 }
 
-
-# ----------------------------
-# EKS Node Group
-# ----------------------------
-resource "aws_eks_node_group" "node-grp" {
-  cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = var.node_group_name
-  node_role_arn   = aws_iam_role.worker.arn
-  subnet_ids      = [data.aws_subnet.subnet-1.id, data.aws_subnet.subnet-2.id]
-  capacity_type   = "ON_DEMAND"
-  disk_size       = 20
-  instance_types  = ["t2.large"]
-
-  labels = {
-    env = "dev"
+output "frontend_service_info" {
+  value = {
+    name      = kubernetes_service.frontend.metadata[0].name
+    namespace = kubernetes_service.frontend.metadata[0].namespace
+    cluster_ip = kubernetes_service.frontend.spec[0].cluster_ip
   }
-
-  tags = {
-    Name = "project-eks-node-group"
-  }
-
-  scaling_config {
-    desired_size = 3
-    max_size     = 10
-    min_size     = 2
-  }
-
-  update_config {
-    max_unavailable = 1
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.AmazonEKSWorkerNodePolicy,
-    aws_iam_role_policy_attachment.AmazonEKS_CNI_Policy,
-    aws_iam_role_policy_attachment.AmazonEC2ContainerRegistryReadOnly,
-    aws_iam_role_policy_attachment.AmazonSSMManagedInstanceCore,
-    aws_iam_role_policy_attachment.autoscaler,
-  ]
-}
-
-# ----------------------------
-# OIDC Provider for ServiceAccount IAM Roles
-# ----------------------------
-data "aws_eks_cluster" "eks_oidc" {
-  name = aws_eks_cluster.eks.name
-}
-
-data "tls_certificate" "oidc_thumbprint" {
-  url = data.aws_eks_cluster.eks_oidc.identity[0].oidc[0].issuer
-}
-
-resource "aws_iam_openid_connect_provider" "eks_oidc" {
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.oidc_thumbprint.certificates[0].sha1_fingerprint]
-  url             = data.aws_eks_cluster.eks_oidc.identity[0].oidc[0].issuer
+  description = "Information about the frontend service"
 }

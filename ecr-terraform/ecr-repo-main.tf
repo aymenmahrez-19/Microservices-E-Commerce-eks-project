@@ -1,27 +1,27 @@
 provider "aws" {
-  region = "us-east-1"  # Change as needed
+  region = "us-east-1"
 }
 
 locals {
   services = [
-    "emailservice",
-    "checkoutservice",
-    "recommendationservice",
+    "email-service",
+    "checkout-service", 
+    "recommendation-service",
     "frontend",
-    "paymentservice",
-    "productcatalogservice",
-    "cartservice",
-    "loadgenerator",
-    "currencyservice",
-    "shippingservice",
-    "adservice"
+    "payment-service",
+    "product-catalog-service",
+    "cart-service",
+    "load-generator",
+    "currency-service",
+    "shipping-service",
+    "ad-service"
   ]
 }
 
-resource "aws_ecr_repository" "services" {
+resource "aws_ecr_repository" "microservices" {
   for_each = toset(local.services)
 
-  name = each.value
+  name = "aymen-${each.value}"
 
   image_scanning_configuration {
     scan_on_push = true
@@ -31,11 +31,25 @@ resource "aws_ecr_repository" "services" {
     encryption_type = "AES256"
   }
 
-  # ✅ This line tells AWS to delete all images before deleting the repo
   force_delete = true
 
   tags = {
-    Environment = "production"
+    Owner       = "aymen"
+    Environment = "dev"
+    Project     = "ecommerce-microservices"
     Service     = each.value
   }
+}
+
+output "ecr_repository_urls" {
+  value = {
+    for service, repo in aws_ecr_repository.microservices :
+    service => repo.repository_url
+  }
+  description = "URLs of all ECR repositories"
+}
+
+output "ecr_repository_names" {
+  value = [for repo in aws_ecr_repository.microservices : repo.name]
+  description = "Names of all created ECR repositories"
 }

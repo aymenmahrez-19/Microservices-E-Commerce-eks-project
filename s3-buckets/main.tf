@@ -1,35 +1,53 @@
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
 }
 
-resource "aws_s3_bucket" "bucket1" {
-  bucket = "aluruarumullaa1"
+# Bucket 1: For Terraform state (used by ALL modules)
+resource "aws_s3_bucket" "terraform_state" {
+  bucket = var.terraform_state_bucket_name
+  force_destroy = var.force_destroy
 
-  tags = {
-    Name        = "aluruarumullaa1"
-    Environment = "dev"
-  }
+  tags = merge(
+    {
+      Name        = "aymen-terraform-state"
+      Owner       = var.owner
+      Environment = var.environment
+      Project     = var.project
+      Purpose     = "terraform-state-storage"
+    },
+    var.tags
+  )
 }
 
-resource "aws_s3_bucket_versioning" "bucket1_versioning" {
-  bucket = aws_s3_bucket.bucket1.id
+resource "aws_s3_bucket_versioning" "terraform_state_versioning" {
+  bucket = aws_s3_bucket.terraform_state.id
   versioning_configuration {
-    status = "Enabled"
+    status = var.enable_versioning ? "Enabled" : "Disabled"
   }
 }
 
-resource "aws_s3_bucket" "bucket2" {
-  bucket = "arumullaaluruu1"
+# Bucket 2: For application data/logs
+resource "aws_s3_bucket" "application_data" {
+  bucket = var.application_data_bucket_name
+  force_destroy = var.force_destroy
 
-  tags = {
-    Name        = "arumullaaluruu1"
-    Environment = "dev"
-  }
+  tags = merge(
+    {
+      Name        = "aymen-application-data"
+      Owner       = var.owner
+      Environment = var.environment
+      Project     = var.project
+      Purpose     = "application-data-storage"
+    },
+    var.tags
+  )
 }
 
-resource "aws_s3_bucket_versioning" "bucket2_versioning" {
-  bucket = aws_s3_bucket.bucket2.id
+resource "aws_s3_bucket_versioning" "application_data_versioning" {
+  bucket = aws_s3_bucket.application_data.id
   versioning_configuration {
-    status = "Enabled"
+    status = var.enable_versioning ? "Enabled" : "Disabled"
   }
 }
+
+# Outputs (keep your updated outputs.tf as is)
