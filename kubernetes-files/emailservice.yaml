@@ -23,20 +23,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
       containers:
-<<<<<<< HEAD
       - name: emailservice
         image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:${BUILD_NUMBER}
-=======
-      - name: server
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:latest
->>>>>>> 46e74a7acb89e34a5c16622910017b6878fb284a
         ports:
         - containerPort: 8080
         env:
