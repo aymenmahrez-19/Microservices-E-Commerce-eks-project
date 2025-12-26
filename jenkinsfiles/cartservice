@@ -5,44 +5,73 @@ pipeline {
         AWS_REGION = 'us-east-1'
         AWS_ACCOUNT_ID = '851725560519'
         SERVICE_NAME = 'cartservice'
-        DOCKERFILE_PATH = 'src/cartservice'  // Adjust if needed
+        // CORRECTED PATH: src/cartservice/src/
+        DOCKERFILE_PATH = 'src/cartservice/src'
         ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}"
+        GIT_EMAIL = 'aymen.bendjaballah@univ-constantine2.dz'
+        GIT_USER_NAME = 'aymenmahrez-19'
     }
     
     stages {
-        stage('Check Dockerfile Exists') {
+        stage('Check Environment') {
             steps {
                 script {
-                    // Check if Dockerfile exists
-                    sh '''
+                    echo "🚀 Cart Service Pipeline - Learner Lab"
+                    echo "=================================="
+                    echo "Service: ${SERVICE_NAME}"
+                    echo "Dockerfile Path: ${DOCKERFILE_PATH}"
+                    echo "ECR Repo: ${ECR_REPO}"
+                    echo "Build: ${BUILD_NUMBER}"
+                    echo "=================================="
+                    
+                    // Verify Dockerfile exists
+                    sh """
                         echo "=== Checking Dockerfile ==="
                         if [ -f "${DOCKERFILE_PATH}/Dockerfile" ]; then
                             echo "✅ Dockerfile found at ${DOCKERFILE_PATH}/Dockerfile"
-                            cat "${DOCKERFILE_PATH}/Dockerfile"
+                            echo "=== Dockerfile Contents ==="
+                            head -20 "${DOCKERFILE_PATH}/Dockerfile"
                         else
                             echo "❌ Dockerfile NOT FOUND at ${DOCKERFILE_PATH}/Dockerfile"
-                            echo "Creating minimal Dockerfile..."
-                            
-                            # Create minimal Dockerfile
-                            cat > "${DOCKERFILE_PATH}/Dockerfile" << 'EOF'
-FROM alpine:latest
-RUN echo "Cart service microservice"
-CMD ["echo", "Cart service running"]
-EOF
-                            
-                            echo "Created placeholder Dockerfile"
+                            echo "Available files in ${DOCKERFILE_PATH}:"
+                            ls -la "${DOCKERFILE_PATH}/" 2>/dev/null || echo "Directory not found"
+                            exit 1
                         fi
-                    '''
+                    """
+                }
+            }
+        }
+        
+        stage('Setup AWS for Learner Lab') {
+            steps {
+                script {
+                    sh """
+                        # Configure AWS for Learner Lab
+                        aws configure set region ${AWS_REGION}
+                        aws configure set output json
+                        
+                        # Test credentials
+                        aws sts get-caller-identity || echo "⚠️ AWS credentials might need configuration"
+                        
+                        # Get account ID
+                        ACCOUNT_ID=\$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "${AWS_ACCOUNT_ID}")
+                        echo "Using AWS Account: \$ACCOUNT_ID"
+                    """
                 }
             }
         }
         
         stage('Login to ECR') {
             steps {
-                sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                """
+                script {
+                    sh """
+                        # Login to ECR
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                        docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                        
+                        echo "✅ Logged into ECR"
+                    """
+                }
             }
         }
         
@@ -50,7 +79,72 @@ EOF
             steps {
                 dir(env.DOCKERFILE_PATH) {
                     sh """
-                        docker build -t ${SERVICE_NAME}:${BUILD_NUMBER} -t ${SERVICE_NAME}:latest .
+                        echo "=== Building Docker Image ==="
+                        echo "Path: \$(pwd)"
+                        echo "Files:"
+                        ls -la
+                        
+                        # Build with cache optimization for Learner Lab
+                        docker build \
+                            -t ${SERVICE_NAME}:\${BUILD_NUMBER} \
+                            -t ${SERVICE_NAME}:latest \
+                            -t ${SERVICE_NAME}:learner-lab-\${BUILD_NUMBER} \
+                            --build-arg BUILDKIT_INLINE_CACHE=1 \
+                            .
+                        
+                        echo "✅ Image built: ${SERVICE_NAME}:\${BUILD_NUMBER}"
+                    """
+                }
+            }
+        }
+        
+        stage('Create/Verify ECR Repository') {
+            steps {
+                script {
+                    sh """
+                        # Check if ECR repository exists
+                        if aws ecr describe-repositories --repository-names ${SERVICE_NAME} --region ${AWS_REGION} 2>/dev/null; then
+                            echo "✅ ECR repository exists: ${SERVICE_NAME}"
+                        else
+                            echo "⚠️ Creating ECR repository: ${SERVICE_NAME}"
+                            
+                            # Create ECR repository with cost-saving settings
+                            aws ecr create-repository \
+                                --repository-name ${SERVICE_NAME} \
+                                --region ${AWS_REGION} \
+                                --image-tag-mutability MUTABLE \
+                                --image-scanning-configuration scanOnPush=false \
+                                --tags Key=Environment,Value=LearnerLab Key=Service,Value=${SERVICE_NAME}
+                                
+                            echo "✅ ECR repository created"
+                            
+                            # Apply lifecycle policy for Learner Lab cost control
+                            cat > lifecycle-policy.json << EOF
+{
+    "rules": [
+        {
+            "rulePriority": 1,
+            "description": "Keep only last 5 images",
+            "selection": {
+                "tagStatus": "any",
+                "countType": "imageCountMoreThan",
+                "countNumber": 5
+            },
+            "action": {
+                "type": "expire"
+            }
+        }
+    ]
+}
+EOF
+                            
+                            aws ecr put-lifecycle-policy \
+                                --repository-name ${SERVICE_NAME} \
+                                --region ${AWS_REGION} \
+                                --lifecycle-policy-text file://lifecycle-policy.json
+                                
+                            echo "✅ Lifecycle policy applied (keep only 5 images)"
+                        fi
                     """
                 }
             }
@@ -58,32 +152,183 @@ EOF
         
         stage('Push to ECR') {
             steps {
-                sh """
-                    # Create ECR repository if it doesn't exist
-                    if ! aws ecr describe-repositories --repository-names ${SERVICE_NAME} --region ${AWS_REGION} 2>/dev/null; then
-                        echo "Creating ECR repository: ${SERVICE_NAME}"
-                        aws ecr create-repository \
+                script {
+                    sh """
+                        # Tag and push
+                        docker tag ${SERVICE_NAME}:\${BUILD_NUMBER} ${ECR_REPO}:\${BUILD_NUMBER}
+                        docker tag ${SERVICE_NAME}:latest ${ECR_REPO}:latest
+                        
+                        echo "Pushing to ECR..."
+                        docker push ${ECR_REPO}:\${BUILD_NUMBER}
+                        docker push ${ECR_REPO}:latest
+                        
+                        echo "✅ Pushed: ${ECR_REPO}:\${BUILD_NUMBER}"
+                        echo "✅ Pushed: ${ECR_REPO}:latest"
+                        
+                        # List images in ECR
+                        echo "=== ECR Images ==="
+                        aws ecr list-images \
                             --repository-name ${SERVICE_NAME} \
                             --region ${AWS_REGION} \
-                            --image-tag-mutability MUTABLE
-                    fi
+                            --query "imageIds[].imageTag" \
+                            --output text 2>/dev/null || echo "No images yet"
+                    """
+                }
+            }
+        }
+        
+        stage('Update Kubernetes YAML') {
+            steps {
+                script {
+                    dir('kubernetes-files') {
+                        // Find the correct YAML file
+                        sh '''
+                            echo "=== Looking for Kubernetes YAML ==="
+                            YAML_FILE=""
+                            
+                            # Try different possible names
+                            for file in cartservice.yaml cart-service.yaml cartservice-deployment.yaml; do
+                                if [ -f "$file" ]; then
+                                    YAML_FILE="$file"
+                                    break
+                                fi
+                            done
+                            
+                            if [ -z "$YAML_FILE" ]; then
+                                echo "⚠️ No cartservice YAML found, creating one..."
+                                YAML_FILE="cartservice.yaml"
+                                
+                                cat > "$YAML_FILE" << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cartservice
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cartservice
+  template:
+    metadata:
+      labels:
+        app: cartservice
+    spec:
+      containers:
+      - name: cartservice
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/cartservice:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cartservice
+  namespace: default
+spec:
+  selector:
+    app: cartservice
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+                                echo "✅ Created Kubernetes YAML: $YAML_FILE"
+                            else
+                                echo "✅ Found Kubernetes YAML: $YAML_FILE"
+                            fi
+                            
+                            # Update image tag
+                            sed -i "s|image:.*|image: ${ECR_REPO}:${BUILD_NUMBER}|g" "$YAML_FILE"
+                            
+                            echo "=== Updated YAML ==="
+                            grep -A2 "image:" "$YAML_FILE"
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Commit and Push to Git') {
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+                        sh """
+                            # Configure git
+                            git config user.email "${GIT_EMAIL}"
+                            git config user.name "${GIT_USER_NAME}"
+                            
+                            # Add and commit
+                            git add kubernetes-files/
+                            git commit -m "LearnerLab: Update ${SERVICE_NAME} to build-\${BUILD_NUMBER}"
+                            
+                            # Push to GitHub
+                            git push https://\${GIT_TOKEN}@github.com/${GIT_USER_NAME}/Microservices-E-Commerce-eks-project.git HEAD:master
+                            
+                            echo "✅ Changes pushed to Git"
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Learner Lab Budget Reminder') {
+            steps {
+                script {
+                    echo """
+                    💰 LEARNER LAB BUDGET REMINDER 💰
+                    ================================
+                    Service: ${SERVICE_NAME}
+                    ECR Repository: ${ECR_REPO}
+                    Image: ${BUILD_NUMBER}
                     
-                    # Tag and push
-                    docker tag ${SERVICE_NAME}:${BUILD_NUMBER} ${ECR_REPO}:${BUILD_NUMBER}
-                    docker tag ${SERVICE_NAME}:latest ${ECR_REPO}:latest
+                    COST NOTES:
+                    - ECR storage: ~\$0.10 per GB-month
+                    - Lifecycle policy: Keeps only 5 images
+                    - Clean old images regularly
                     
-                    docker push ${ECR_REPO}:${BUILD_NUMBER}
-                    docker push ${ECR_REPO}:latest
-                    
-                    echo "✅ Pushed: ${ECR_REPO}:${BUILD_NUMBER}"
-                """
+                    NEXT STEPS:
+                    1. Deploy to EKS: kubectl apply -f kubernetes-files/cartservice.yaml
+                    2. Monitor: kubectl get pods -w
+                    3. Cleanup: Stop services when not in use
+                    ================================
+                    """
+                }
             }
         }
     }
     
     post {
         always {
-            sh 'docker system prune -f'
+            // Cleanup to save space
+            sh '''
+                echo "=== Cleaning up ==="
+                docker system prune -f
+                rm -f lifecycle-policy.json 2>/dev/null || true
+            '''
         }
+        
+        success {
+            echo "✅ Cart service pipeline completed successfully!"
+        }
+        
+        failure {
+            echo "❌ Cart service pipeline failed. Check logs above."
+        }
+        
+        cleanup {
+            cleanWs()
+        }
+    }
+    
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        retry(1)
     }
 }
