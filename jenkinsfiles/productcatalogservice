@@ -47,16 +47,17 @@ pipeline {
         stage('Update YAML & Git Push'){ 
             steps {
                 dir('kubernetes-files') {
-                    withCredentials([usernamePassword(credentialsId:'my-git-pattoken', usernameVariable:'GIT_USER', passwordVariable:'GIT_TOKEN')]) {
-                        sh """
-                            git config user.email "${GIT_EMAIL}"
-                            git config user.name "${GIT_USER_NAME}"
-                            sed -i "s#image:.*#image: ${REPO_URL}:${IMAGE_TAG}#g" ${YAML_FILE}
-                            git add ${YAML_FILE}
-                            git commit -m "Update ${IMAGE_NAME} image to version ${IMAGE_TAG}" || echo "No changes to commit"
-                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
-                        """
-                    }
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+    sh """
+        git config user.email "${GIT_EMAIL}"
+        git config user.name "${GIT_USER_NAME}"
+        sed -i "s#image:.*#image: ${REPO_URL}:${IMAGE_TAG}#g" ${YAML_FILE}
+        git add ${YAML_FILE}
+        git commit -m "Update ${IMAGE_NAME} image to version ${IMAGE_TAG}" || echo "No changes to commit"
+        git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+    """
+}
+
                 }
             } 
         }
