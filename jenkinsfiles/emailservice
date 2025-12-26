@@ -1,85 +1,77 @@
 pipeline {
-    agent any 
+    agent any
 
     environment {
         GIT_REPO_NAME = "Microservices-E-Commerce-eks-project"
-        GIT_EMAIL = "aymen.bendjaballah@univ-constantine2.dz"
         GIT_USER_NAME = "aymenmahrez-19"
-        IMAGE_NAME = "emailservice"
-        REPO_URL = "851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service"
-        YAML_FILE = "emailservice.yaml"
-    }
+        GIT_EMAIL = "aymen.bendjaballah@univ-constantine2.dz"
+        GIT_CREDENTIALS_ID = "my-git-pattoken"
 
-    options {
-        timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        AWS_REGION = 'us-east-1'
+        AWS_ACCOUNT_ID = '851725560519'
+        IMAGE_TAG = 'latest'
+
+        SERVICE_NAME = 'aymen-email-service'
+        YAML_FILE = 'emailservice.yaml'
+        ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}"
     }
 
     stages {
-        stage('Cleaning Workspace') {
+        stage('Checkout') {
             steps {
-                cleanWs()
+                git branch: 'master', url: "https://github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git"
             }
         }
 
-        stage('Checkout from Git') {
+        stage('Login to ECR') {
             steps {
-                git branch: 'master', url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
+                sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}"
             }
         }
 
-        stage('Docker Image Build') {
+        stage('Build Docker Image') {
             steps {
                 dir('src/emailservice') {
-                    sh '''
-                        docker build -t ${IMAGE_NAME} . 
-                    '''
+                    sh "docker build -t ${SERVICE_NAME}:${IMAGE_TAG} ."
                 }
             }
         }
 
-        stage('ECR Image Pushing') {
+        stage('Push to ECR') {
             steps {
-                sh '''
-                    aws ecr get-login-password --region us-east-1 \
-                        | docker login --username AWS --password-stdin 242201296943.dkr.ecr.us-east-1.amazonaws.com
-
-                    docker tag ${IMAGE_NAME}:latest ${REPO_URL}:${BUILD_NUMBER}
-                    docker push ${REPO_URL}:${BUILD_NUMBER}
-                '''
+                sh """
+                    docker tag ${SERVICE_NAME}:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}
+                    docker push ${ECR_REPO}:${IMAGE_TAG}
+                """
             }
         }
 
-        stage('Update Deployment File and Push') {
+        stage('Update Kubernetes YAML & Push') {
             steps {
                 dir('kubernetes-files') {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'github-creds',
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_TOKEN'
-                    )]) {
-                        sh '''
+                    withCredentials([string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')]) {
+                        sh """
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER_NAME}"
-
-                            sed -i "s#image:.*#image: ${REPO_URL}:${BUILD_NUMBER}#g" ${YAML_FILE}
+                            sed -i "s#image:.*#image: ${ECR_REPO}:${IMAGE_TAG}#g" ${YAML_FILE}
                             git add ${YAML_FILE}
-                            git commit -m "Update ${IMAGE_NAME} image to version ${BUILD_NUMBER}" || echo "No changes to commit"
-                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
-                        '''
+                            git commit -m "Update ${SERVICE_NAME} image to ${IMAGE_TAG}" || echo "No changes to commit"
+                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+                        """
                     }
                 }
+            }
+        }
+
+        stage('Clean Local Docker Images') {
+            steps {
+                sh "docker rmi ${SERVICE_NAME}:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG} || true"
             }
         }
     }
 
     post {
-        success {
-            echo '✅ Pipeline completed successfully'
-        }
-        failure {
-            echo '❌ Pipeline failed'
-        }
+        success { echo "✅ ${SERVICE_NAME} pipeline completed successfully!" }
+        failure { echo "❌ ${SERVICE_NAME} pipeline failed!" }
     }
 }
