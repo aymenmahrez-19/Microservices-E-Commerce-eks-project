@@ -17,7 +17,7 @@ spec:
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
-        runAsNonRoot: true
+        runAsNonRoot: true         
         runAsUser: 1000
       containers:
       - name: server
@@ -28,7 +28,7 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
-        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/adservice:1
+        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/adservice:TAG_PLACEHOLDER
         ports:
         - containerPort: 9555
         env:

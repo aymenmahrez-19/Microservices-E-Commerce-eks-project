@@ -8,6 +8,7 @@ pipeline {
         IMAGE_NAME = "adservice"
         REPO_URL = "242201296943.dkr.ecr.us-east-1.amazonaws.com/adservice"
         YAML_FILE = "adservice.yaml"
+        AWS_REGION = "us-east-1"
     }
 
     options {
@@ -42,18 +43,18 @@ pipeline {
             }
         }
 
-        stage('ECR Image Pushing') {
+        stage('ECR Image Push') {
             steps {
                 sh '''
                     set -e
-                    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 242201296943.dkr.ecr.us-east-1.amazonaws.com
+                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin 242201296943.dkr.ecr.${AWS_REGION}.amazonaws.com
                     docker tag ${IMAGE_NAME}:latest ${REPO_URL}:${BUILD_NUMBER}
                     docker push ${REPO_URL}:${BUILD_NUMBER}
                 '''
             }
         }
 
-        stage('Update Deployment File and Push') {
+        stage('Update Deployment YAML & Push to GitHub') {
             steps {
                 dir('kubernetes-files') {
                     withCredentials([usernamePassword(
@@ -66,7 +67,9 @@ pipeline {
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER_NAME}"
 
+                            # Update Docker image tag in YAML
                             sed -i "s#image:.*#image: ${REPO_URL}:${BUILD_NUMBER}#g" ${YAML_FILE}
+
                             git add ${YAML_FILE}
                             git commit -m "Update ${IMAGE_NAME} image to version ${BUILD_NUMBER}" || echo "No changes to commit"
                             git push https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
