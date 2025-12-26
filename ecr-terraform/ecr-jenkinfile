@@ -7,6 +7,7 @@ pipeline {
         GIT_EMAIL = 'aymen.bendjaballah@univ-constantine2.dz'
         GIT_USER_NAME = 'aymenmahrez-19'
         GIT_REPO_NAME = 'Microservices-E-Commerce-eks-project'
+        // Learner Lab specific
         LEARNER_LAB_ROLE = 'LabRole'
         LEARNER_LAB_INSTANCE_PROFILE = 'LabInstanceProfile'
     }
@@ -25,7 +26,7 @@ pipeline {
         )
         
         choice(
-            name: 'AWS_REGION_PARAM',
+            name: 'AWS_REGION',
             choices: ['us-east-1', 'us-west-2'],
             description: 'AWS Region (Learner Lab supports us-east-1 and us-west-2)'
         )
@@ -45,17 +46,16 @@ pipeline {
                     echo "================================"
                     echo "Action: ${params.ACTION}"
                     echo "ECR Repo: ${params.ECR_REPO_NAME}"
-                    echo "Region: ${params.AWS_REGION_PARAM}"
+                    echo "Region: ${params.AWS_REGION}"
                     echo "Git User: ${env.GIT_USER_NAME}"
                     echo "================================"
                     
                     // Check AWS credentials
                     sh '''
                         echo "=== AWS Credentials Check ==="
-                        aws configure set region ${AWS_REGION}
+                        aws configure set region $AWS_REGION
                         aws configure set output json
                         
-                        # Try to get caller identity
                         if aws sts get-caller-identity; then
                             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
                             echo "✅ AWS Account: $ACCOUNT_ID"
@@ -65,7 +65,7 @@ pipeline {
                             echo "1. Jenkins EC2 has LabInstanceProfile attached"
                             echo "2. IAM role LabRole exists"
                         fi
-                        
+
                         echo "=== Terraform Check ==="
                         terraform --version
                     '''
@@ -87,20 +87,19 @@ pipeline {
                     ]]
                 ])
                 
-                // Verify Terraform directory exists
-                sh '''
+                sh """
                     echo "=== Directory Structure ==="
                     ls -la
                     
-                    if [ -d "${TERRAFORM_DIR}" ]; then
-                        echo "✅ Terraform directory found: ${TERRAFORM_DIR}"
-                        ls -la ${TERRAFORM_DIR}/
+                    if [ -d "$TERRAFORM_DIR" ]; then
+                        echo "✅ Terraform directory found: $TERRAFORM_DIR"
+                        ls -la $TERRAFORM_DIR/
                     else
-                        echo "❌ Terraform directory not found: ${TERRAFORM_DIR}"
+                        echo "❌ Terraform directory not found: $TERRAFORM_DIR"
                         echo "Creating basic Terraform configuration..."
-                        mkdir -p ${TERRAFORM_DIR}
+                        mkdir -p $TERRAFORM_DIR
                     fi
-                '''
+                """
             }
         }
 
@@ -110,7 +109,6 @@ pipeline {
                     sh '''
                         echo "=== Fixing Terraform Files ==="
                         
-                        # Fix .tr to .tf extensions
                         for file in *.tr; do
                             if [ -f "$file" ]; then
                                 new_name="${file%.tr}.tf"
@@ -118,21 +116,13 @@ pipeline {
                                 mv "$file" "$new_name"
                             fi
                         done
-                        
-                        # Create basic files if they don't exist
+
                         if [ ! -f "main.tf" ] && [ ! -f "provider.tf" ]; then
                             echo "Creating basic Terraform configuration..."
                             
                             cat > provider.tf << EOF
 provider "aws" {
-  region = "${AWS_REGION}"
-  
-  # In Learner Lab, we assume LabRole is available
-  # assume_role {
-  #   role_arn = "arn:aws:iam::\${data.aws_caller_identity.current.account_id}:role/LabRole"
-  # }
-  
-  # Skip validation for testing
+  region = "$AWS_REGION"
   skip_credentials_validation = true
   skip_metadata_api_check     = true
 }
@@ -142,30 +132,20 @@ data "aws_region" "current" {}
 EOF
 
                             cat > main.tf << EOF
-# ECR Repository for Learner Lab
-variable "repository_name" {
-  default = "microservices-ecr"
-}
-
-variable "region" {
-  default = "us-east-1"
-}
-
 resource "aws_ecr_repository" "main" {
-  name = var.repository_name
-  
+  name = "${ECR_REPO_NAME}"
   image_tag_mutability = "MUTABLE"
-  
+
   image_scanning_configuration {
     scan_on_push = true
   }
-  
+
   encryption_configuration {
     encryption_type = "AES256"
   }
-  
+
   tags = {
-    Name        = var.repository_name
+    Name        = "${ECR_REPO_NAME}"
     Environment = "LearnerLab"
     CreatedBy   = "Jenkins"
     Project     = "Microservices-E-Commerce"
@@ -209,16 +189,14 @@ resource "aws_ecr_lifecycle_policy" "main" {
 
 output "repository_url" {
   value = aws_ecr_repository.main.repository_url
-  description = "ECR Repository URL"
 }
 
 output "repository_name" {
   value = aws_ecr_repository.main.name
-  description = "ECR Repository Name"
 }
 EOF
                         fi
-                        
+
                         echo "=== Terraform Files ==="
                         ls -la *.tf 2>/dev/null || echo "No .tf files"
                     '''
@@ -231,228 +209,57 @@ EOF
                 dir(env.TERRAFORM_DIR) {
                     sh '''
                         echo "=== Terraform Init ==="
-                        
-                        # Initialize Terraform
-                        terraform init -input=false -reconfigure
-                        
-                        if [ $? -eq 0 ]; then
-                            echo "✅ Terraform initialized successfully"
-                        else
-                            echo "❌ Terraform init failed"
-                            echo "Trying with local backend..."
-                            
-                            # Create local backend if needed
-                            if ! grep -q "backend" *.tf 2>/dev/null; then
-                                cat > backend.tf << 'EOF'
-terraform {
-  backend "local" {
-    path = "terraform.tfstate"
-  }
-}
-EOF
-                                terraform init -input=false -reconfigure
-                            fi
-                        fi
+                        terraform init -input=false -reconfigure || true
                     '''
                 }
             }
         }
 
         stage('📊 Terraform Plan') {
-            when {
-                expression { 
-                    params.ACTION == 'plan' || params.ACTION == 'apply' 
-                }
-            }
+            when { expression { params.ACTION == 'plan' || params.ACTION == 'apply' } }
             steps {
                 dir(env.TERRAFORM_DIR) {
-                    script {
-                        def region = params.AWS_REGION_PARAM ?: env.AWS_REGION
-                        def repoName = params.ECR_REPO_NAME ?: 'microservices-ecr'
-                        
-                        sh """
-                            echo "=== Terraform Plan ==="
-                            echo "ECR Repository: ${repoName}"
-                            echo "Region: ${region}"
-                            
-                            # Create plan
-                            terraform plan \\
-                                -var="repository_name=${repoName}" \\
-                                -var="region=${region}" \\
-                                -out=tfplan
-                            
-                            # Show plan summary
-                            echo "=== Plan Summary ==="
-                            terraform show -no-color tfplan | grep -A5 -B5 "Plan:" || true
-                        """
-                        
-                        // Archive the plan
-                        archiveArtifacts artifacts: '**/tfplan', fingerprint: true
-                    }
+                    sh """
+                        echo "=== Terraform Plan ==="
+                        terraform plan -var="repository_name=${params.ECR_REPO_NAME}" -var="region=${params.AWS_REGION}" -out=tfplan
+                        echo "=== Plan Summary ==="
+                        terraform show -no-color tfplan | head -n 20 || true
+                    """
+                    archiveArtifacts artifacts: '**/tfplan', fingerprint: true
                 }
             }
         }
 
         stage('⚠️ Manual Approval (Apply/Destroy)') {
-            when {
-                expression { 
-                    (params.ACTION == 'apply' || params.ACTION == 'destroy') && 
-                    !params.AUTO_APPROVE 
-                }
-            }
+            when { expression { (params.ACTION == 'apply' || params.ACTION == 'destroy') && !params.AUTO_APPROVE } }
             steps {
-                script {
-                    def action = params.ACTION.toUpperCase()
-                    def region = params.AWS_REGION_PARAM ?: env.AWS_REGION
-                    def repoName = params.ECR_REPO_NAME ?: 'microservices-ecr'
-                    
-                    def message = """
-                    ⚠️ LEARNER LAB BUDGET WARNING ⚠️
-                    =================================
-                    Action: ${action}
-                    ECR Repository: ${repoName}
-                    Region: ${region}
-                    
-                    IMPORTANT: 
-                    1. Check your remaining budget in lab interface
-                    2. ECR storage costs ~\\$0.10 per GB-month
-                    3. This action will affect your lab budget
-                    
-                    Are you sure you want to continue?
-                    """
-                    
-                    timeout(time: 2, unit: 'MINUTES') {
-                        input(
-                            message: message,
-                            ok: "Yes, proceed with ${action}",
-                            submitterParameter: 'approver'
-                        )
-                    }
-                    
-                    echo "Approved by: ${approver}"
+                timeout(time: 2, unit: 'MINUTES') {
+                    input(message: "Confirm ${params.ACTION} action?", ok: "Proceed")
                 }
             }
         }
 
         stage('🚀 Terraform Apply') {
-            when {
-                expression { params.ACTION == 'apply' }
-            }
+            when { expression { params.ACTION == 'apply' } }
             steps {
                 dir(env.TERRAFORM_DIR) {
-                    script {
-                        def region = params.AWS_REGION_PARAM ?: env.AWS_REGION
-                        def repoName = params.ECR_REPO_NAME ?: 'microservices-ecr'
-                        
-                        sh """
-                            echo "=== Terraform Apply ==="
-                            
-                            if [ -f "tfplan" ]; then
-                                terraform apply "tfplan"
-                            else
-                                terraform apply \\
-                                    -var="repository_name=${repoName}" \\
-                                    -var="region=${region}" \\
-                                    ${params.AUTO_APPROVE ? '-auto-approve' : ''}
-                            fi
-                            
-                            echo "✅ ECR Repository created successfully"
-                            
-                            # Show outputs
-                            echo "=== Outputs ==="
-                            terraform output -json || terraform output
-                        """
-                    }
+                    sh """
+                        echo "=== Terraform Apply ==="
+                        terraform apply tfplan ${params.AUTO_APPROVE ? "-auto-approve" : ""}
+                        terraform output -json || terraform output
+                    """
                 }
             }
         }
 
         stage('🗑️ Terraform Destroy') {
-            when {
-                expression { params.ACTION == 'destroy' }
-            }
+            when { expression { params.ACTION == 'destroy' } }
             steps {
                 dir(env.TERRAFORM_DIR) {
-                    script {
-                        def region = params.AWS_REGION_PARAM ?: env.AWS_REGION
-                        def repoName = params.ECR_REPO_NAME ?: 'microservices-ecr'
-                        
-                        sh """
-                            echo "=== Terraform Destroy ==="
-                            echo "WARNING: This will delete ECR repository and all images!"
-                            
-                            terraform destroy \\
-                                -var="repository_name=${repoName}" \\
-                                -var="region=${region}" \\
-                                ${params.AUTO_APPROVE ? '-auto-approve' : ''}
-                            
-                            echo "✅ Resources destroyed"
-                        """
-                    }
-                }
-            }
-        }
-
-        stage('📝 Update Git with Results') {
-            when {
-                expression { params.ACTION == 'apply' }
-            }
-            steps {
-                script {
-                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
-                        def region = params.AWS_REGION_PARAM ?: env.AWS_REGION
-                        def repoName = params.ECR_REPO_NAME ?: 'microservices-ecr'
-                        
-                        sh """
-                            # Configure git
-                            git config user.email "${GIT_EMAIL}"
-                            git config user.name "${GIT_USER_NAME}"
-                            
-                            # Get Terraform outputs
-                            cd ${TERRAFORM_DIR}
-                            REPO_URL=\$(terraform output -raw repository_url 2>/dev/null || echo "NOT_AVAILABLE")
-                            
-                            # Create README with results
-                            cd ..
-                            cat > ECR_RESULTS.md << EOF
-                            # ECR Repository Created - Learner Lab
-                            
-                            ## Details
-                            - **Action**: ${params.ACTION}
-                            - **Repository**: ${repoName}
-                            - **Region**: ${region}
-                            - **URL**: \${REPO_URL}
-                            - **Build**: \${BUILD_NUMBER}
-                            - **Date**: \$(date)
-                            
-                            ## Learner Lab Notes
-                            - Monitor budget in lab interface
-                            - ECR costs ~\\$0.10 per GB-month
-                            - Lifecycle policy keeps only 5 images
-                            - Untagged images deleted after 1 day
-                            
-                            ## Usage
-                            \`\`\`bash
-                            # Login to ECR
-                            aws ecr get-login-password --region ${region} | \\
-                            docker login --username AWS --password-stdin \${REPO_URL%/*}
-                            
-                            # Push image
-                            docker tag myimage:latest \${REPO_URL}:v1.0
-                            docker push \${REPO_URL}:v1.0
-                            \`\`\`
-                            EOF
-                            
-                            # Commit and push
-                            git add ECR_RESULTS.md
-                            git commit -m "LearnerLab: ECR ${params.ACTION} completed - ${repoName} [Build \${BUILD_NUMBER}]"
-                            
-                            # Push to GitHub
-                            git push https://\${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:master
-                            
-                            echo "✅ Results committed to Git"
-                        """
-                    }
+                    sh """
+                        echo "=== Terraform Destroy ==="
+                        terraform destroy ${params.AUTO_APPROVE ? "-auto-approve" : ""}
+                    """
                 }
             }
         }
@@ -460,68 +267,13 @@ EOF
 
     post {
         always {
-            // Cleanup
-            sh '''
-                echo "=== Cleanup ==="
-                rm -f tfplan tfplan.json 2>/dev/null || true
-                docker system prune -f 2>/dev/null || true
-            '''
-            
-            // Archive artifacts
-            dir(env.TERRAFORM_DIR) {
-                archiveArtifacts artifacts: '*.tfstate, *.tfstate.backup, terraform.tfstate', fingerprint: true, allowEmptyArchive: true
-            }
-            
-            // Save console output
-            archiveArtifacts artifacts: 'ECR_RESULTS.md', fingerprint: true, allowEmptyArchive: true
-        }
-        
-        success {
-            script {
-                def action = params.ACTION ?: "unknown"
-                def region = params.AWS_REGION_PARAM ?: env.AWS_REGION
-                def repoName = params.ECR_REPO_NAME ?: 'microservices-ecr'
-                
-                echo """
-                ✅ PIPELINE SUCCESS
-                =================================
-                Action: ${action}
-                Build: ${BUILD_NUMBER}
-                Repository: ${repoName}
-                Region: ${region}
-                
-                LEARNER LAB REMINDERS:
-                1. Monitor budget in lab interface
-                2. Clean up unused resources
-                3. Max 9 EC2 instances allowed
-                4. Use small instance types only
-                =================================
-                """
-            }
-        }
-        
-        failure {
-            echo """
-            ❌ PIPELINE FAILED
-            =================================
-            Build: ${BUILD_NUMBER}
-            
-            COMMON LEARNER LAB ISSUES:
-            1. AWS credentials not configured
-            2. Terraform init failed
-            3. ECR repository already exists
-            4. IAM permissions insufficient
-            
-            DEBUG COMMANDS:
-            - aws sts get-caller-identity
-            - terraform init
-            - terraform validate
-            =================================
-            """
-        }
-        
-        cleanup {
             cleanWs()
+        }
+        success {
+            echo "✅ Pipeline completed successfully"
+        }
+        failure {
+            echo "❌ Pipeline failed. Check logs"
         }
     }
 
