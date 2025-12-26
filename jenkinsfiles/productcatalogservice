@@ -1,34 +1,27 @@
 pipeline {
     agent any
     environment {
-        GIT_REPO_NAME = "Microservices-E-Commerce-eks-project"
-        GIT_EMAIL = "aymen.bendjaballah@univ-constantine2.dz"
-        GIT_USER_NAME = "aymenmahrez-19"
-        IMAGE_NAME = "product-catalog-service"
-        REPO_URL = "851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-product-catalog-service"
-        YAML_FILE = "product-catalog-service.yaml" // تأكد من اسم الملف والمسار الصحيح
-        AWS_REGION = "us-east-1"
-        BUILD_NUMBER = "${env.BUILD_NUMBER}"
-    }
-    options { 
-        timeout(time: 30, unit: 'MINUTES') 
-        disableConcurrentBuilds() 
-        buildDiscarder(logRotator(numToKeepStr: '10')) 
+        AWS_REGION = 'us-east-1'
+        ECR_REPO = '851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-product-catalog-service'
+        IMAGE_NAME = 'product-catalog-service'
     }
     stages {
         stage('Clean Workspace') {
-            steps { cleanWs() }
+            steps {
+                cleanWs()
+            }
         }
 
-        stage('Checkout') {
+        stage('Checkout SCM') {
             steps {
-                git branch: 'master', url: "https://github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git"
+                git branch: 'master',
+                    url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
             }
         }
 
         stage('Docker Build') {
             steps {
-                dir("src/${IMAGE_NAME}") {
+                dir('src/productcatalogservice') { // ← هنا تم تصحيح المسار
                     sh "docker build -t ${IMAGE_NAME}:latest ."
                 }
             }
@@ -36,25 +29,28 @@ pipeline {
 
         stage('Push to ECR') {
             steps {
-                sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REPO_URL}
-                    docker tag ${IMAGE_NAME}:latest ${REPO_URL}:${BUILD_NUMBER}
-                    docker push ${REPO_URL}:${BUILD_NUMBER}
-                """
+                script {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                        docker login --username AWS --password-stdin ${ECR_REPO}
+                        docker tag ${IMAGE_NAME}:latest ${ECR_REPO}:latest
+                        docker push ${ECR_REPO}:latest
+                    """
+                }
             }
         }
 
         stage('Update YAML & Git Push') {
             steps {
-                dir('kubernetes-files') { // عدل هذا إذا كان مسار YAML مختلف
+                dir('kubernetes-files') {
                     withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
                         sh """
-                            git config user.email "${GIT_EMAIL}"
-                            git config user.name "${GIT_USER_NAME}"
-                            sed -i "s#image:.*#image: ${REPO_URL}:${BUILD_NUMBER}#g" ${YAML_FILE}
-                            git add ${YAML_FILE}
-                            git commit -m "Update ${IMAGE_NAME} image to version ${BUILD_NUMBER}" || echo "No changes"
-                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+                            git config user.email "aymen.bendjaballah@univ-constantine2.dz"
+                            git config user.name "aymenmahrez-19"
+                            sed -i 's#image:.*#image: ${ECR_REPO}:latest#g' product-catalog-service.yaml
+                            git add product-catalog-service.yaml
+                            git commit -m "Update image to latest"
+                            git push https://${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git master
                         """
                     }
                 }
@@ -63,7 +59,11 @@ pipeline {
     }
 
     post {
-        success { echo "✅ ${IMAGE_NAME} pipeline succeeded!" }
-        failure { echo "❌ ${IMAGE_NAME} pipeline failed!" }
+        success {
+            echo "✅ product-catalog-service pipeline succeeded!"
+        }
+        failure {
+            echo "❌ product-catalog-service pipeline failed!"
+        }
     }
 }
