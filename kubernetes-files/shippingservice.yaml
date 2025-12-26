@@ -1,47 +1,35 @@
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: shippingservice
+  name: shipping-service
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      app: shippingservice
+      app: shipping-service
   template:
     metadata:
       labels:
-        app: shippingservice
+        app: shipping-service
     spec:
       serviceAccountName: default
+      terminationGracePeriodSeconds: 5
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
       containers:
-      - name: server
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/shippingservice:3
+      - name: shipping-service
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-shipping-service:${BUILD_NUMBER}
         ports:
-        - containerPort: 50051
-        env:
-        - name: PORT
-          value: "50051"
-        - name: DISABLE_PROFILER
-          value: "1"
+        - containerPort: 8080
         readinessProbe:
-          periodSeconds: 5
-          grpc:
-            port: 50051
+          initialDelaySeconds: 15
+          periodSeconds: 10
         livenessProbe:
-          grpc:
-            port: 50051
+          initialDelaySeconds: 20
+          periodSeconds: 10
         resources:
           requests:
             cpu: 100m
@@ -53,12 +41,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: shippingservice
+  name: shipping-service
 spec:
   type: ClusterIP
   selector:
-    app: shippingservice
+    app: shipping-service
   ports:
   - name: grpc
-    port: 50051
-    targetPort: 50051
+    port: 5000
+    targetPort: 8080

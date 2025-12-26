@@ -1,10 +1,7 @@
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cartservice
-  labels:
-    app: cartservice
 spec:
   replicas: 1
   selector:
@@ -17,66 +14,42 @@ spec:
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
-
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
-
       containers:
-        - name: cartservice
-          image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/cartservice:1
-          imagePullPolicy: Always
-
-          securityContext:
-            allowPrivilegeEscalation: false
-            privileged: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
-
-          ports:
-            - name: grpc
-              containerPort: 7070
-
-          env:
-            - name: REDIS_ADDR
-              value: "redis-cart:6379"
-
-          resources:
-            requests:
-              cpu: 200m
-              memory: 64Mi
-            limits:
-              cpu: 300m
-              memory: 128Mi
-
-          readinessProbe:
-            grpc:
-              port: 7070
-            initialDelaySeconds: 15
-            periodSeconds: 10
-
-          livenessProbe:
-            grpc:
-              port: 7070
-            initialDelaySeconds: 15
-            periodSeconds: 10
-
+      - name: cartservice
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-cart-service:${BUILD_NUMBER}
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        readinessProbe:
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: cartservice
-  labels:
-    app: cartservice
 spec:
   type: ClusterIP
   selector:
     app: cartservice
   ports:
-    - name: grpc
-      port: 7070
-      targetPort: 7070
+  - name: grpc
+    port: 5000
+    targetPort: 8080

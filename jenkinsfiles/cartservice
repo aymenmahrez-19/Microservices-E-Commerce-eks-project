@@ -2,83 +2,46 @@ pipeline {
     agent any
 
     environment {
+        AWS_REGION = 'us-east-1'
+        AWS_ACCOUNT_ID = '851725560519'
+        SERVICE_NAME = 'aymen-cart-service'
+        ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}"
+        IMAGE_TAG = "latest"
+        YAML_FILE = "cartservice.yaml"
         GIT_REPO_NAME = "Microservices-E-Commerce-eks-project"
-        GIT_EMAIL     = "aymen.bendjaballah@univ-constantine2.dz"
         GIT_USER_NAME = "aymenmahrez-19"
-
-        IMAGE_NAME = "cartservice"
-        REPO_URL   = "242201296943.dkr.ecr.us-east-1.amazonaws.com/cartservice"
-        YAML_FILE  = "cartservice.yaml"
-        AWS_REGION = "us-east-1"
-    }
-
-    options {
-        timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        GIT_EMAIL = "aymen.bendjaballah@univ-constantine2.dz"
     }
 
     stages {
-
-        stage('🧹 Clean Workspace') {
-            steps {
-                cleanWs()
-            }
+        stage('Checkout') {
+            steps { git branch: 'master', url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git' }
         }
 
-        stage('📥 Checkout Source Code') {
-            steps {
-                git branch: 'master',
-                    url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
-            }
+        stage('Login to ECR') {
+            steps { sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}" }
         }
 
-        stage('🐳 Build Docker Image') {
-            steps {
-                dir('src/cartservice/src') {
-                    sh '''
-                        set -e
-                        docker container prune -f
-                        docker image prune -f
-                        docker build -t ${IMAGE_NAME}:latest .
-                    '''
-                }
-            }
+        stage('Build Docker Image') {
+            steps { dir('src/cartservice') { sh "docker build -t ${SERVICE_NAME}:${IMAGE_TAG} ." } }
         }
 
-        stage('📤 Push Image to Amazon ECR') {
-            steps {
-                sh '''
-                    set -e
-                    aws ecr get-login-password --region ${AWS_REGION} \
-                      | docker login --username AWS --password-stdin 242201296943.dkr.ecr.us-east-1.amazonaws.com
-
-                    docker tag ${IMAGE_NAME}:latest ${REPO_URL}:${BUILD_NUMBER}
-                    docker push ${REPO_URL}:${BUILD_NUMBER}
-                '''
-            }
+        stage('Tag & Push Docker Image') {
+            steps { sh "docker tag ${SERVICE_NAME}:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG} && docker push ${ECR_REPO}:${IMAGE_TAG}" }
         }
 
-        stage('📝 Update Kubernetes YAML and Push to GitHub') {
+        stage('Update Kubernetes YAML & Push') {
             steps {
                 dir('kubernetes-files') {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'github-creds',
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_TOKEN'
-                    )]) {
-                        sh '''
-                            set -e
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+                        sh """
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER_NAME}"
-
-                            sed -i "s#image:.*#image: ${REPO_URL}:${BUILD_NUMBER}#g" ${YAML_FILE}
-
+                            sed -i "s#image:.*#image: ${ECR_REPO}:${IMAGE_TAG}#g" ${YAML_FILE}
                             git add ${YAML_FILE}
-                            git commit -m "ci(cartservice): update image to ${BUILD_NUMBER}" || echo "No changes to commit"
-
-                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
-                        '''
+                            git commit -m "Update ${SERVICE_NAME} image to ${IMAGE_TAG}" || echo "No changes to commit"
+                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+                        """
                     }
                 }
             }
@@ -86,11 +49,7 @@ pipeline {
     }
 
     post {
-        success {
-            echo '✅ Cartservice pipeline completed successfully'
-        }
-        failure {
-            echo '❌ Cartservice pipeline failed'
-        }
+        success { echo "✅ Docker image for ${SERVICE_NAME} pushed successfully!" }
+        failure { echo "❌ Pipeline failed for ${SERVICE_NAME}" }
     }
 }

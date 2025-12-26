@@ -1,9 +1,9 @@
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: adservice
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: adservice
@@ -17,40 +17,26 @@ spec:
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
-        runAsNonRoot: true         
+        runAsNonRoot: true
         runAsUser: 1000
       containers:
-      - name: server
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/adservice:TAG_PLACEHOLDER
+      - name: adservice
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-ad-service:${BUILD_NUMBER}
         ports:
-        - containerPort: 9555
-        env:
-        - name: PORT
-          value: "9555"
-        resources:
-          requests:
-            cpu: 200m
-            memory: 180Mi
-          limits:
-            cpu: 300m
-            memory: 300Mi
+        - containerPort: 8080
         readinessProbe:
-          initialDelaySeconds: 20
-          periodSeconds: 15
-          grpc:
-            port: 9555
+          initialDelaySeconds: 15
+          periodSeconds: 10
         livenessProbe:
           initialDelaySeconds: 20
-          periodSeconds: 15
-          grpc:
-            port: 9555
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
@@ -62,5 +48,5 @@ spec:
     app: adservice
   ports:
   - name: grpc
-    port: 9555
-    targetPort: 9555
+    port: 5000
+    targetPort: 8080

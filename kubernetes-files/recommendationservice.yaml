@@ -1,16 +1,16 @@
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: recommendationservice
+  name: recommendation-service
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      app: recommendationservice
+      app: recommendation-service
   template:
     metadata:
       labels:
-        app: recommendationservice
+        app: recommendation-service
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
@@ -20,49 +20,33 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
       containers:
-      - name: server
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/recommendationservice:1
+      - name: recommendation-service
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-recommendation-service:${BUILD_NUMBER}
         ports:
         - containerPort: 8080
         readinessProbe:
-          periodSeconds: 5
-          grpc:
-            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
         livenessProbe:
-          periodSeconds: 5
-          grpc:
-            port: 8080
-        env:
-        - name: PORT
-          value: "8080"
-        - name: PRODUCT_CATALOG_SERVICE_ADDR
-          value: "productcatalogservice:3550"
-        - name: DISABLE_PROFILER
-          value: "1"
+          initialDelaySeconds: 20
+          periodSeconds: 10
         resources:
           requests:
             cpu: 100m
-            memory: 220Mi
+            memory: 64Mi
           limits:
             cpu: 200m
-            memory: 450Mi
+            memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: recommendationservice
+  name: recommendation-service
 spec:
   type: ClusterIP
   selector:
-    app: recommendationservice
+    app: recommendation-service
   ports:
   - name: grpc
-    port: 8080
+    port: 5000
     targetPort: 8080

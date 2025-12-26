@@ -1,10 +1,7 @@
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: emailservice
-  labels:
-    app: emailservice
 spec:
   replicas: 1
   selector:
@@ -24,7 +21,7 @@ spec:
         runAsUser: 1000
       containers:
       - name: emailservice
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:latest
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:${BUILD_NUMBER}
         ports:
         - containerPort: 8080
         env:
