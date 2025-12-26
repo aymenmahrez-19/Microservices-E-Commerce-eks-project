@@ -40,23 +40,28 @@ pipeline {
             }
         }
 
-        stage('Update YAML & Git Push') {
-            steps {
-                dir('kubernetes-files') {
-                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
-                        sh """
-                            git config user.email "aymen.bendjaballah@univ-constantine2.dz"
-                            git config user.name "aymenmahrez-19"
-                            sed -i 's#image:.*#image: ${ECR_REPO}:latest#g' product-catalog-service.yaml
-                            git add product-catalog-service.yaml
-                            git commit -m "Update image to latest"
-                            git push https://${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git master
-                        """
-                    }
-                }
+stage('Update YAML & Git Push') {
+    steps {
+        dir('kubernetes-files') {
+            withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+                sh(script: """
+                    git config user.email "aymen.bendjaballah@univ-constantine2.dz"
+                    git config user.name "aymenmahrez-19"
+                    if [ -f productcatalogservice.yaml ]; then
+                        sed -i 's#image:.*#image: ${ECR_REPO}:latest#g' product-catalog-service.yaml
+                        git add productcatalogservice.yaml
+                        git commit -m "Update image to latest"
+                        git push https://${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git master
+                    else
+                        echo "❌ product-catalog-service.yaml not found!"
+                        exit 1
+                    fi
+                """)
             }
         }
     }
+}
+
 
     post {
         success {
