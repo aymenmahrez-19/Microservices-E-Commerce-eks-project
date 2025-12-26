@@ -21,7 +21,7 @@ spec:
         runAsUser: 1000
       containers:
       - name: recommendation-service
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-recommendation-service:${BUILD_NUMBER}
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-recommendation-service:latest
         ports:
         - containerPort: 8080
         readinessProbe:
