@@ -1,345 +1,430 @@
 pipeline {
-    agent any
-    
-    stages {
-        stage('Setup AWS Credentials') {
-            steps {
-                script {
-                    // Configure AWS CLI
-                    sh '''
-                        # Configure AWS region
-                        aws configure set region ${AWS_REGION}
-                        aws configure set output json
-                        
-                        # For Learner Lab, if running on EC2 with LabInstanceProfile
-                        # credentials are automatically available via metadata service
-                        
-                        # Test if credentials work
-                        if ! aws sts get-caller-identity; then
-                            echo "ERROR: AWS credentials not configured!"
-                            echo "Please do one of:"
-                            echo "1. Attach LabInstanceProfile to Jenkins EC2"
-                            echo "2. Configure AWS credentials in Jenkins"
-                            echo "3. Use withCredentials binding"
-                            exit 1
-                        fi
-                    '''
-                }
-            }
-        }
-        
+    agent any 
 
     environment {
         AWS_REGION = 'us-east-1'
         TERRAFORM_DIR = 'ecr-terraform'
-        ECR_REPO_NAME = 'microservices-ecr'
+        GIT_EMAIL = 'aymen.bendjaballah@univ-constantine2.dz'
+        GIT_USER_NAME = 'aymenmahrez-19'
+        GIT_REPO_NAME = 'Microservices-E-Commerce-eks-project'
         // Learner Lab specific
-        LAB_ROLE_ARN = 'arn:aws:iam::${AWS_ACCOUNT_ID}:role/LabRole'
+        LEARNER_LAB_ROLE = 'LabRole'
+        LEARNER_LAB_INSTANCE_PROFILE = 'LabInstanceProfile'
+    }
+
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['plan', 'apply', 'destroy'],
+            description: '🔧 Select Terraform action (plan=preview, apply=create, destroy=delete)'
+        )
+        
+        string(
+            name: 'ECR_REPO_NAME',
+            defaultValue: 'microservices-ecr',
+            description: 'Name for ECR repository (lowercase, hyphens only)'
+        )
+        
+        choice(
+            name: 'AWS_REGION',
+            choices: ['us-east-1', 'us-west-2'],
+            description: 'AWS Region (Learner Lab supports us-east-1 and us-west-2)'
+        )
+        
+        booleanParam(
+            name: 'AUTO_APPROVE',
+            defaultValue: false,
+            description: '⚠️ Auto-approve apply/destroy (NOT RECOMMENDED for Learner Lab)'
+        )
     }
 
     stages {
-        stage('Setup AWS Credentials') {
+        stage('🔍 Check Learner Lab Environment') {
             steps {
                 script {
-                    echo "🚀 Setting up Learner Lab AWS credentials..."
+                    echo "🚀 LEARNER LAB PIPELINE"
+                    echo "================================"
+                    echo "Action: ${params.ACTION}"
+                    echo "ECR Repo: ${params.ECR_REPO_NAME}"
+                    echo "Region: ${params.AWS_REGION}"
+                    echo "Git User: ${env.GIT_USER_NAME}"
+                    echo "================================"
                     
-                    // Method 1: If Jenkins has LabInstanceProfile attached
+                    // Check AWS credentials
                     sh '''
-                        echo "=== AWS Credentials Setup ==="
-                        
-                        # Check if we're on EC2 with instance profile
-                        if curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null; then
-                            echo "Using EC2 instance profile credentials"
-                            INSTANCE_PROFILE=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-                            echo "Instance profile: $INSTANCE_PROFILE"
-                        else
-                            echo "No instance profile detected"
-                        fi
-                        
-                        # Get AWS account ID
-                        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "NOT_AVAILABLE")
-                        echo "AWS Account ID: $AWS_ACCOUNT_ID"
-                        
-                        # Configure AWS CLI
+                        echo "=== AWS Credentials Check ==="
                         aws configure set region ${AWS_REGION}
                         aws configure set output json
                         
-                        # Test AWS credentials
-                        aws sts get-caller-identity && echo "✅ AWS credentials working" || echo "❌ AWS credentials failed"
+                        # Try to get caller identity
+                        if aws sts get-caller-identity; then
+                            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                            echo "✅ AWS Account: $ACCOUNT_ID"
+                        else
+                            echo "❌ AWS credentials not working"
+                            echo "In Learner Lab, ensure:"
+                            echo "1. Jenkins EC2 has LabInstanceProfile attached"
+                            echo "2. IAM role LabRole exists"
+                        fi
+                        
+                        echo "=== Terraform Check ==="
+                        terraform --version
                     '''
                 }
             }
         }
 
-        stage('Checkout Git Repository') {
+        stage('📥 Checkout Code') {
             steps {
-                echo "🔄 Checking out Git repository..."
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: 'master']],
+                    branches: [[name: '*/master']],
                     extensions: [
                         [$class: 'CleanBeforeCheckout'],
-                        [$class: 'CloneOption', depth: 1, noTags: false, shallow: true]
+                        [$class: 'CloneOption', depth: 1, shallow: true]
                     ],
                     userRemoteConfigs: [[
                         url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
                     ]]
                 ])
+                
+                // Verify Terraform directory exists
+                sh """
+                    echo "=== Directory Structure ==="
+                    ls -la
+                    
+                    if [ -d "${TERRAFORM_DIR}" ]; then
+                        echo "✅ Terraform directory found: ${TERRAFORM_DIR}"
+                        ls -la ${TERRAFORM_DIR}/
+                    else
+                        echo "❌ Terraform directory not found: ${TERRAFORM_DIR}"
+                        echo "Creating basic Terraform configuration..."
+                        mkdir -p ${TERRAFORM_DIR}
+                    fi
+                """
             }
         }
 
-        stage('Terraform Version') {
-            steps {
-                sh '''
-                    echo "=== Terraform Version ==="
-                    terraform --version
-                    echo "=== AWS CLI Version ==="
-                    aws --version
-                '''
-            }
-        }
-
-        stage('Fix Terraform Files') {
+        stage('🔧 Fix Terraform Files') {
             steps {
                 dir(env.TERRAFORM_DIR) {
                     sh '''
-                        echo "🔧 Fixing Terraform file extensions..."
+                        echo "=== Fixing Terraform Files ==="
                         
-                        # Rename .tr files to .tf if they exist
-                        if ls *.tr 1> /dev/null 2>&1; then
-                            echo "Renaming .tr files to .tf..."
-                            for file in *.tr; do
+                        # Fix .tr to .tf extensions
+                        for file in *.tr; do
+                            if [ -f "$file" ]; then
                                 new_name="${file%.tr}.tf"
                                 echo "Renaming $file to $new_name"
                                 mv "$file" "$new_name"
-                            done
+                            fi
+                        done
+                        
+                        # Create basic files if they don't exist
+                        if [ ! -f "main.tf" ] && [ ! -f "provider.tf" ]; then
+                            echo "Creating basic Terraform configuration..."
+                            
+                            cat > provider.tf << EOF
+provider "aws" {
+  region = "${AWS_REGION}"
+  
+  # In Learner Lab, we assume LabRole is available
+  # assume_role {
+  #   role_arn = "arn:aws:iam::\${data.aws_caller_identity.current.account_id}:role/LabRole"
+  # }
+  
+  # Skip validation for testing
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+}
+
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+EOF
+
+                            cat > main.tf << EOF
+# ECR Repository for Learner Lab
+resource "aws_ecr_repository" "main" {
+  name = "${ECR_REPO_NAME}"
+  
+  image_tag_mutability = "MUTABLE"
+  
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+  
+  tags = {
+    Name        = "${ECR_REPO_NAME}"
+    Environment = "LearnerLab"
+    CreatedBy   = "Jenkins"
+    Project     = "Microservices-E-Commerce"
+    CostCenter  = "Lab-Budget"
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "main" {
+  repository = aws_ecr_repository.main.name
+  
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep last 5 images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 5
+        }
+        action = {
+          type = "expire"
+        }
+      },
+      {
+        rulePriority = 2
+        description  = "Remove untagged images after 1 day"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 1
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+output "repository_url" {
+  value = aws_ecr_repository.main.repository_url
+  description = "ECR Repository URL"
+}
+
+output "repository_name" {
+  value = aws_ecr_repository.main.name
+  description = "ECR Repository Name"
+}
+EOF
                         fi
                         
-                        # Check what files exist
-                        echo "=== Current directory contents ==="
-                        ls -la
-                        
-                        echo "=== Terraform files ==="
-                        ls -la *.tf 2>/dev/null || echo "No .tf files found"
+                        echo "=== Terraform Files ==="
+                        ls -la *.tf 2>/dev/null || echo "No .tf files"
                     '''
                 }
             }
         }
 
-        stage('Terraform Init - Fixed Credentials') {
+        stage('⚙️ Terraform Init') {
             steps {
                 dir(env.TERRAFORM_DIR) {
-                    script {
-                        echo "⚙️ Initializing Terraform with Learner Lab credentials..."
+                    sh '''
+                        echo "=== Terraform Init ==="
                         
-                        // Option 1: Use AWS_PROFILE environment variable
-                        withEnv(['AWS_PROFILE=default']) {
-                            sh '''
-                                # Configure AWS credentials explicitly
-                                export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-                                export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-                                export AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
-                                
-                                echo "Testing AWS connectivity..."
-                                aws sts get-caller-identity || {
-                                    echo "AWS credentials not working. Trying alternative methods..."
-                                    
-                                    # Try using the LabRole if we're on EC2
-                                    if [ -f "/var/run/secrets/eks.amazonaws.com/serviceaccount/token" ]; then
-                                        echo "Running on EKS, using service account token"
-                                    else
-                                        echo "Attempting to use instance metadata..."
-                                        # Try to get credentials from instance metadata
-                                        if curl -s http://169.254.169.254/latest/meta-data/ 2>/dev/null; then
-                                            echo "EC2 instance detected, credentials should be available via metadata"
-                                        fi
-                                    }
-                                }
-                                
-                                # Initialize Terraform with explicit backend config
-                                echo "Initializing Terraform..."
-                                
-                                # Check if backend config exists
-                                if [ -f "backend.tf" ] || [ -f "backend.tr" ]; then
-                                    echo "Backend configuration found"
-                                    terraform init -input=false -reconfigure
-                                else
-                                    echo "No backend config, using local backend"
-                                    # Create a minimal terraform block if none exists
-                                    if [ ! -f "terraform.tf" ] && [ ! -f "terraform.tr" ]; then
-                                        cat > terraform.tf << EOF
+                        # Initialize Terraform
+                        terraform init -input=false -reconfigure
+                        
+                        if [ $? -eq 0 ]; then
+                            echo "✅ Terraform initialized successfully"
+                        else
+                            echo "❌ Terraform init failed"
+                            echo "Trying with local backend..."
+                            
+                            # Create local backend if needed
+                            if ! grep -q "backend" *.tf 2>/dev/null; then
+                                cat > backend.tf << 'EOF'
 terraform {
-  required_version = ">= 1.0"
   backend "local" {
     path = "terraform.tfstate"
   }
 }
 EOF
-                                    fi
-                                    terraform init -input=false -reconfigure
-                                fi
-                            '''
-                        }
-                    }
+                                terraform init -input=false -reconfigure
+                            fi
+                        fi
+                    '''
                 }
             }
         }
 
-        stage('Manual AWS Credentials Setup') {
+        stage('📊 Terraform Plan') {
+            when {
+                expression { 
+                    params.ACTION == 'plan' || params.ACTION == 'apply' 
+                }
+            }
+            steps {
+                dir(env.TERRAFORM_DIR) {
+                    sh """
+                        echo "=== Terraform Plan ==="
+                        echo "ECR Repository: ${params.ECR_REPO_NAME}"
+                        echo "Region: ${params.AWS_REGION}"
+                        
+                        # Create plan
+                        terraform plan \
+                            -var="repository_name=${params.ECR_REPO_NAME}" \
+                            -var="region=${params.AWS_REGION}" \
+                            -out=tfplan
+                        
+                        # Show plan summary
+                        echo "=== Plan Summary ==="
+                        terraform show -no-color tfplan | grep -A5 -B5 "Plan:" || true
+                    """
+                    
+                    // Archive the plan
+                    archiveArtifacts artifacts: '**/tfplan', fingerprint: true
+                }
+            }
+        }
+
+        stage('⚠️ Manual Approval (Apply/Destroy)') {
+            when {
+                expression { 
+                    (params.ACTION == 'apply' || params.ACTION == 'destroy') && 
+                    !params.AUTO_APPROVE 
+                }
+            }
             steps {
                 script {
-                    echo "🔐 Manual AWS Credentials Setup Required"
-                    echo "Since this is a Learner Lab, you need to configure AWS credentials:"
-                    echo ""
-                    echo "OPTION 1: If Jenkins is running on EC2 with LabInstanceProfile:"
-                    echo "   - Make sure Jenkins EC2 has LabInstanceProfile attached"
-                    echo "   - AWS credentials will be available automatically"
-                    echo ""
-                    echo "OPTION 2: Configure credentials manually:"
-                    echo "   1. Go to Jenkins → Manage Jenkins → Credentials"
-                    echo "   2. Add AWS credentials with ID 'aws-credentials'"
-                    echo "   3. Use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from Learner Lab"
-                    echo ""
-                    echo "OPTION 3: Use withCredentials binding (uncomment below)"
+                    def action = params.ACTION.toUpperCase()
+                    def message = """
+                    ⚠️ LEARNER LAB BUDGET WARNING ⚠️
+                    =================================
+                    Action: ${action}
+                    ECR Repository: ${params.ECR_REPO_NAME}
+                    Region: ${params.AWS_REGION}
                     
-                    // Uncomment and configure this if you have credentials in Jenkins
-                    /*
-                    withCredentials([[
-                        $class: 'AmazonWebServicesCredentialsBinding',
-                        credentialsId: 'aws-credentials',
-                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                    ]]) {
-                        dir(env.TERRAFORM_DIR) {
-                            sh '''
-                                export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                                export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                                terraform init -input=false -reconfigure
-                            '''
-                        }
+                    IMPORTANT: 
+                    1. Check your remaining budget in lab interface
+                    2. ECR storage costs ~$0.10 per GB-month
+                    3. This action will affect your lab budget
+                    
+                    Are you sure you want to continue?
+                    """
+                    
+                    timeout(time: 2, unit: 'MINUTES') {
+                        input(
+                            message: message,
+                            ok: "Yes, proceed with ${action}",
+                            submitterParameter: 'approver'
+                        )
                     }
-                    */
                     
-                    // For now, let's create a simple test
-                    sh '''
-                        echo "=== Testing minimal AWS setup ==="
-                        
-                        # Create a minimal AWS configuration
-                        mkdir -p ~/.aws
-                        cat > ~/.aws/config << EOF
-[default]
-region = ${AWS_REGION}
-output = json
-EOF
-                        
-                        # Test with public AWS service (no credentials needed)
-                        aws ec2 describe-regions --region us-east-1 --query "Regions[].RegionName" --output text || echo "This requires credentials"
-                    '''
+                    echo "Approved by: ${approver}"
                 }
             }
         }
 
-        stage('Create Minimal Terraform Configuration') {
+        stage('🚀 Terraform Apply') {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
             steps {
                 dir(env.TERRAFORM_DIR) {
-                    sh '''
-                        echo "📝 Creating minimal Terraform configuration for testing..."
+                    sh """
+                        echo "=== Terraform Apply ==="
                         
-                        # Create provider.tf if it doesn't exist
-                        if [ ! -f "provider.tf" ] && [ ! -f "provider.tr" ]; then
-                            cat > provider.tf << 'EOF'
-provider "aws" {
-  region = "us-east-1"
-  
-  # In Learner Lab, assume LabRole is available
-  # assume_role {
-  #   role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/LabRole"
-  # }
-  
-  # Skip credential validation for testing
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-}
-
-data "aws_caller_identity" "current" {}
-
-data "aws_region" "current" {}
-EOF
+                        if [ -f "tfplan" ]; then
+                            terraform apply "tfplan"
+                        else
+                            terraform apply \
+                                -var="repository_name=${params.ECR_REPO_NAME}" \
+                                -var="region=${params.AWS_REGION}" \
+                                ${params.AUTO_APPROVE ? '-auto-approve' : ''}
                         fi
                         
-                        # Create main.tf if it doesn't exist
-                        if [ ! -f "main.tf" ] && [ ! -f "main.tr" ] && [ ! -f "ecr-repo-main.tf" ] && [ ! -f "ecr-repo-main.tr" ]; then
-                            cat > main.tf << 'EOF'
-# Simple ECR repository for Learner Lab testing
-resource "aws_ecr_repository" "test_repo" {
-  name = "learner-lab-test-${data.aws_caller_identity.current.account_id}"
-  
-  image_scanning_configuration {
-    scan_on_push = false  # Disable to save costs
-  }
-  
-  image_tag_mutability = "MUTABLE"
-  
-  tags = {
-    Environment = "LearnerLab-Test"
-    CreatedBy   = "Jenkins"
-    AutoDelete  = "true"
-  }
-}
-
-output "repository_url" {
-  value = aws_ecr_repository.test_repo.repository_url
-  description = "URL of the created ECR repository"
-}
-
-output "repository_name" {
-  value = aws_ecr_repository.test_repo.name
-  description = "Name of the created ECR repository"
-}
-EOF
-                        fi
-                    '''
+                        echo "✅ ECR Repository created successfully"
+                        
+                        # Show outputs
+                        echo "=== Outputs ==="
+                        terraform output -json || terraform output
+                    """
                 }
             }
         }
 
-        stage('Test Terraform Plan') {
+        stage('🗑️ Terraform Destroy') {
+            when {
+                expression { params.ACTION == 'destroy' }
+            }
             steps {
                 dir(env.TERRAFORM_DIR) {
-                    sh '''
-                        echo "📊 Testing Terraform plan..."
+                    sh """
+                        echo "=== Terraform Destroy ==="
+                        echo "WARNING: This will delete ECR repository and all images!"
                         
-                        # First, let's see what Terraform thinks
-                        echo "=== Terraform Validate ==="
-                        terraform validate || echo "Validate failed (might need credentials)"
+                        terraform destroy \
+                            -var="repository_name=${params.ECR_REPO_NAME}" \
+                            -var="region=${params.AWS_REGION}" \
+                            ${params.AUTO_APPROVE ? '-auto-approve' : ''}
                         
-                        echo "=== Terraform Providers ==="
-                        terraform providers
-                        
-                        # Try a plan without actual AWS calls
-                        echo "=== Dry-run Plan ==="
-                        terraform plan -target=null_resource.dummy 2>&1 || \
-                        echo "Plan requires AWS credentials"
-                        
-                        # Create a dummy resource for testing
-                        if [ ! -f "dummy.tf" ]; then
-                            cat > dummy.tf << 'EOF'
-resource "null_resource" "dummy" {
-  triggers = {
-    always_run = timestamp()
-  }
-  
-  provisioner "local-exec" {
-    command = "echo 'Terraform is configured correctly on ${timestamp()}'"
-  }
-}
-EOF
-                            terraform init
-                            terraform plan -target=null_resource.dummy
-                            terraform apply -target=null_resource.dummy -auto-approve
-                        fi
-                    '''
+                        echo "✅ Resources destroyed"
+                    """
+                }
+            }
+        }
+
+        stage('📝 Update Git with Results') {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+                        sh """
+                            # Configure git
+                            git config user.email "${GIT_EMAIL}"
+                            git config user.name "${GIT_USER_NAME}"
+                            
+                            # Get Terraform outputs
+                            cd ${TERRAFORM_DIR}
+                            REPO_URL=\$(terraform output -raw repository_url 2>/dev/null || echo "NOT_AVAILABLE")
+                            
+                            # Create README with results
+                            cd ..
+                            cat > ECR_RESULTS.md << EOF
+                            # ECR Repository Created - Learner Lab
+                            
+                            ## Details
+                            - **Action**: ${params.ACTION}
+                            - **Repository**: ${params.ECR_REPO_NAME}
+                            - **Region**: ${params.AWS_REGION}
+                            - **URL**: \${REPO_URL}
+                            - **Build**: \${BUILD_NUMBER}
+                            - **Date**: \$(date)
+                            
+                            ## Learner Lab Notes
+                            - Monitor budget in lab interface
+                            - ECR costs ~\$0.10 per GB-month
+                            - Lifecycle policy keeps only 5 images
+                            - Untagged images deleted after 1 day
+                            
+                            ## Usage
+                            \`\`\`bash
+                            # Login to ECR
+                            aws ecr get-login-password --region ${params.AWS_REGION} | \\
+                            docker login --username AWS --password-stdin \${REPO_URL%/*}
+                            
+                            # Push image
+                            docker tag myimage:latest \${REPO_URL}:v1.0
+                            docker push \${REPO_URL}:v1.0
+                            \`\`\`
+                            EOF
+                            
+                            # Commit and push
+                            git add ECR_RESULTS.md
+                            git commit -m "LearnerLab: ECR ${params.ACTION} completed - ${params.ECR_REPO_NAME} [Build \${BUILD_NUMBER}]"
+                            
+                            # Push to GitHub
+                            git push https://\${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:master
+                            
+                            echo "✅ Results committed to Git"
+                        """
+                    }
                 }
             }
         }
@@ -347,43 +432,70 @@ EOF
 
     post {
         always {
-            echo "🔚 Pipeline execution completed"
-            
             // Cleanup
             sh '''
-                echo "=== Cleaning up ==="
-                find . -name "*.tfstate*" -type f -delete 2>/dev/null || true
-                find . -name "*.backup" -type f -delete 2>/dev/null || true
-                find . -name ".terraform" -type d -exec rm -rf {} + 2>/dev/null || true
+                echo "=== Cleanup ==="
+                rm -f tfplan tfplan.json 2>/dev/null || true
+                docker system prune -f 2>/dev/null || true
             '''
             
-            // Archive logs
-            archiveArtifacts artifacts: '**/*.log', allowEmptyArchive: true
+            // Archive artifacts
+            dir(env.TERRAFORM_DIR) {
+                archiveArtifacts artifacts: '*.tfstate, *.tfstate.backup, terraform.tfstate', fingerprint: true, allowEmptyArchive: true
+            }
+            
+            // Save console output
+            archiveArtifacts artifacts: 'ECR_RESULTS.md', fingerprint: true, allowEmptyArchive: true
         }
         
         success {
-            echo "✅ Pipeline succeeded!"
-            echo ""
-            echo "NEXT STEPS for Learner Lab:"
-            echo "1. Configure AWS credentials in Jenkins"
-            echo "2. Attach LabInstanceProfile to Jenkins EC2"
-            echo "3. Update Terraform files to use .tf extension"
-            echo "4. Test with: terraform init && terraform plan"
+            script {
+                def action = params.ACTION ?: "unknown"
+                echo """
+                ✅ PIPELINE SUCCESS
+                =================================
+                Action: ${action}
+                Build: ${BUILD_NUMBER}
+                Repository: ${params.ECR_REPO_NAME}
+                Region: ${params.AWS_REGION}
+                
+                LEARNER LAB REMINDERS:
+                1. Monitor budget in lab interface
+                2. Clean up unused resources
+                3. Max 9 EC2 instances allowed
+                4. Use small instance types only
+                =================================
+                """
+            }
         }
         
         failure {
-            echo "❌ Pipeline failed"
-            echo ""
-            echo "TROUBLESHOOTING Learner Lab:"
-            echo "1. Check if AWS credentials are configured"
-            echo "2. Verify Jenkins has AWS permissions"
-            echo "3. Ensure Terraform files have .tf extension"
-            echo "4. Try running AWS CLI manually: aws sts get-caller-identity"
+            echo """
+            ❌ PIPELINE FAILED
+            =================================
+            Build: ${BUILD_NUMBER}
+            
+            COMMON LEARNER LAB ISSUES:
+            1. AWS credentials not configured
+            2. Terraform init failed
+            3. ECR repository already exists
+            4. IAM permissions insufficient
+            
+            DEBUG COMMANDS:
+            - aws sts get-caller-identity
+            - terraform init
+            - terraform validate
+            =================================
+            """
+        }
+        
+        cleanup {
+            cleanWs()
         }
     }
 
     options {
-        timeout(time: 1, unit: 'HOURS')
+        timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
