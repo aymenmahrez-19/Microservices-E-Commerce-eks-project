@@ -8,57 +8,63 @@ pipeline {
         REPO_URL = "851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-product-catalog-service"
         YAML_FILE = "product-catalog-service.yaml"
         AWS_REGION = "us-east-1"
-        IMAGE_TAG = "latest"
+        IMAGE_TAG = "latest" // أو استخدم BUILD_NUMBER إذا أردت versioned tag
     }
-    options {
-        timeout(time:30, unit:'MINUTES')
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr:'10'))
+    options { 
+        timeout(time:30,unit:'MINUTES') 
+        disableConcurrentBuilds() 
+        buildDiscarder(logRotator(numToKeepStr:'10')) 
     }
+
     stages {
-        stage('Clean Workspace') {
-            steps { cleanWs() }
+        stage('Clean Workspace'){ 
+            steps { cleanWs() } 
         }
-        stage('Checkout') {
-            steps {
-                git branch:'master', url:"https://github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git"
-            }
+
+        stage('Checkout'){ 
+            steps { 
+                git branch:'master', url:"https://github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" 
+            } 
         }
-        stage('Docker Build') {
-            steps {
-                dir("src/productcatalogservice") {
+
+        stage('Docker Build'){ 
+            steps { 
+                dir("src/${IMAGE_NAME}") {
                     sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
                 }
-            }
+            } 
         }
-        stage('Push to ECR') {
-            steps {
+
+        stage('Push to ECR'){ 
+            steps { 
                 sh """
                     aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REPO_URL}
                     docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REPO_URL}:${IMAGE_TAG}
                     docker push ${REPO_URL}:${IMAGE_TAG}
-                """
-            }
+                """ 
+            } 
         }
-        stage('Update YAML & Git Push') {
+
+        stage('Update YAML & Git Push'){ 
             steps {
                 dir('kubernetes-files') {
-                    withCredentials([usernamePassword(credentialsId:'my-git-pattoken', usernameVariable:'GIT_USER', passwordVariable:'GIT_TOKEN')]) {
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
                         sh """
                             git config user.email "${GIT_EMAIL}"
                             git config user.name "${GIT_USER_NAME}"
                             sed -i "s#image:.*#image: ${REPO_URL}:${IMAGE_TAG}#g" ${YAML_FILE}
                             git add ${YAML_FILE}
                             git commit -m "Update ${IMAGE_NAME} image to ${IMAGE_TAG}" || echo "No changes"
-                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
                         """
                     }
                 }
-            }
+            } 
         }
     }
-    post {
-        success { echo "✅ ${IMAGE_NAME} pipeline completed successfully!" }
-        failure { echo "❌ ${IMAGE_NAME} pipeline failed!" }
+
+    post { 
+        success { echo "✅ ${IMAGE_NAME} pipeline completed successfully" } 
+        failure { echo "❌ ${IMAGE_NAME} pipeline failed" } 
     }
 }
