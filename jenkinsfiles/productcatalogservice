@@ -3,9 +3,14 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-1'
         ECR_REPO = '851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-product-catalog-service'
-        IMAGE_NAME = 'product-catalog-service'
+    }
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        ansiColor('xterm')
     }
     stages {
+
         stage('Clean Workspace') {
             steps {
                 cleanWs()
@@ -14,58 +19,68 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-                git branch: 'master',
-                    url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/master']],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [[$class: 'CleanBeforeCheckout']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
+                    ]]
+                ])
             }
         }
 
         stage('Docker Build') {
             steps {
-                dir('src/productcatalogservice') { // ← هنا تم تصحيح المسار
-                    sh "docker build -t ${IMAGE_NAME}:latest ."
+                dir('src/productcatalogservice') {
+                    sh """
+                        docker build -t product-catalog-service:latest .
+                    """
                 }
             }
         }
 
         stage('Push to ECR') {
             steps {
-                script {
+                withAWS(region: "${AWS_REGION}", credentials: 'aws-jenkins-credentials') {
                     sh """
                         aws ecr get-login-password --region ${AWS_REGION} | \
                         docker login --username AWS --password-stdin ${ECR_REPO}
-                        docker tag ${IMAGE_NAME}:latest ${ECR_REPO}:latest
+                        docker tag product-catalog-service:latest ${ECR_REPO}:latest
                         docker push ${ECR_REPO}:latest
                     """
                 }
             }
         }
 
-stage('Update YAML & Git Push') {
-    steps {
-        dir('kubernetes-files') {
-            withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
-                sh(script: """
-                    git config user.email "aymen.bendjaballah@univ-constantine2.dz"
-                    git config user.name "aymenmahrez-19"
-                    if [ -f productcatalogservice.yaml ]; then
-                        sed -i 's#image:.*#image: ${ECR_REPO}:latest#g' product-catalog-service.yaml
-                        git add productcatalogservice.yaml
-                        git commit -m "Update image to latest"
-                        git push https://${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git master
-                    else
-                        echo "❌ product-catalog-service.yaml not found!"
-                        exit 1
-                    fi
-                """)
+        stage('Update YAML & Git Push') {
+            steps {
+                dir('kubernetes-files') {
+                    withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
+                        sh(script: """
+                            git config user.email "aymen.bendjaballah@univ-constantine2.dz"
+                            git config user.name "aymenmahrez-19"
+                            YAML_FILE="productcatalogservice.yaml"
+                            if [ -f "\${YAML_FILE}" ]; then
+                                sed -i 's#image:.*#image: ${ECR_REPO}:latest#g' "\${YAML_FILE}"
+                                git add "\${YAML_FILE}"
+                                git commit -m "Update image to latest"
+                                git push https://${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git master
+                            else
+                                echo "❌ \${YAML_FILE} not found!"
+                                exit 1
+                            fi
+                        """)
+                    }
+                }
             }
         }
     }
-}
-
 
     post {
         success {
-            echo "✅ product-catalog-service pipeline succeeded!"
+            echo "✅ product-catalog-service pipeline completed successfully!"
         }
         failure {
             echo "❌ product-catalog-service pipeline failed!"
