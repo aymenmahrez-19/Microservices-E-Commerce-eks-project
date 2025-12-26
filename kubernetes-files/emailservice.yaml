@@ -3,7 +3,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: emailservice
+  labels:
+    app: emailservice
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: emailservice
@@ -20,15 +23,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
       containers:
-      - name: server
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/emailservice:1
+      - name: emailservice
+        image: 242201296943.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:${BUILD_NUMBER}
         ports:
         - containerPort: 8080
         env:
