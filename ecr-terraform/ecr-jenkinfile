@@ -7,258 +7,115 @@ pipeline {
         GIT_EMAIL = 'aymen.bendjaballah@univ-constantine2.dz'
         GIT_USER_NAME = 'aymenmahrez-19'
         GIT_REPO_NAME = 'Microservices-E-Commerce-eks-project'
-        // Learner Lab specific
-        LEARNER_LAB_ROLE = 'LabRole'
-        LEARNER_LAB_INSTANCE_PROFILE = 'LabInstanceProfile'
     }
 
     parameters {
         choice(
             name: 'ACTION',
             choices: ['plan', 'apply', 'destroy'],
-            description: '🔧 Select Terraform action (plan=preview, apply=create, destroy=delete)'
+            description: 'Select Terraform action (plan=preview, apply=create, destroy=delete)'
         )
         
         string(
-            name: 'ECR_REPO_NAME',
-            defaultValue: 'microservices-ecr',
-            description: 'Name for ECR repository (lowercase, hyphens only)'
+            name: 'ECR_REPO_PREFIX',
+            defaultValue: 'aymen',
+            description: 'Prefix for all ECR repositories'
         )
         
         choice(
             name: 'AWS_REGION',
             choices: ['us-east-1', 'us-west-2'],
-            description: 'AWS Region (Learner Lab supports us-east-1 and us-west-2)'
+            description: 'AWS Region'
         )
         
         booleanParam(
             name: 'AUTO_APPROVE',
             defaultValue: false,
-            description: '⚠️ Auto-approve apply/destroy (NOT RECOMMENDED for Learner Lab)'
+            description: 'Auto-approve apply/destroy'
         )
     }
 
     stages {
-        stage('🔍 Check Learner Lab Environment') {
+        stage('Check Environment') {
             steps {
                 script {
-                    echo "🚀 LEARNER LAB PIPELINE"
-                    echo "================================"
                     echo "Action: ${params.ACTION}"
-                    echo "ECR Repo: ${params.ECR_REPO_NAME}"
-                    echo "Region: ${params.AWS_REGION}"
-                    echo "Git User: ${env.GIT_USER_NAME}"
-                    echo "================================"
-                    
-                    // Check AWS credentials
+                    echo "ECR Repo Prefix: ${params.ECR_REPO_PREFIX}"
+                    echo "AWS Region: ${params.AWS_REGION}"
                     sh '''
-                        echo "=== AWS Credentials Check ==="
-                        aws configure set region $AWS_REGION
+                        aws configure set region ${AWS_REGION}
                         aws configure set output json
-                        
-                        if aws sts get-caller-identity; then
-                            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-                            echo "✅ AWS Account: $ACCOUNT_ID"
-                        else
-                            echo "❌ AWS credentials not working"
-                            echo "In Learner Lab, ensure:"
-                            echo "1. Jenkins EC2 has LabInstanceProfile attached"
-                            echo "2. IAM role LabRole exists"
-                        fi
-
-                        echo "=== Terraform Check ==="
+                        echo "AWS identity:"
+                        aws sts get-caller-identity
                         terraform --version
                     '''
                 }
             }
         }
 
-        stage('📥 Checkout Code') {
+        stage('Checkout Code') {
             steps {
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: '*/master']],
-                    extensions: [
-                        [$class: 'CleanBeforeCheckout'],
-                        [$class: 'CloneOption', depth: 1, shallow: true]
-                    ],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
-                    ]]
+                    extensions: [[$class: 'CleanBeforeCheckout']],
+                    userRemoteConfigs: [[url: "https://github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git"]]
                 ])
-                
-                sh """
-                    echo "=== Directory Structure ==="
-                    ls -la
-                    
-                    if [ -d "$TERRAFORM_DIR" ]; then
-                        echo "✅ Terraform directory found: $TERRAFORM_DIR"
-                        ls -la $TERRAFORM_DIR/
-                    else
-                        echo "❌ Terraform directory not found: $TERRAFORM_DIR"
-                        echo "Creating basic Terraform configuration..."
-                        mkdir -p $TERRAFORM_DIR
-                    fi
-                """
+                sh "ls -la ${TERRAFORM_DIR}"
             }
         }
 
-        stage('🔧 Fix Terraform Files') {
+        stage('Terraform Init') {
             steps {
                 dir(env.TERRAFORM_DIR) {
                     sh '''
-                        echo "=== Fixing Terraform Files ==="
-                        
-                        for file in *.tr; do
-                            if [ -f "$file" ]; then
-                                new_name="${file%.tr}.tf"
-                                echo "Renaming $file to $new_name"
-                                mv "$file" "$new_name"
-                            fi
-                        done
-
-                        if [ ! -f "main.tf" ] && [ ! -f "provider.tf" ]; then
-                            echo "Creating basic Terraform configuration..."
-                            
-                            cat > provider.tf << EOF
-provider "aws" {
-  region = "$AWS_REGION"
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-}
-
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-EOF
-
-                            cat > main.tf << EOF
-resource "aws_ecr_repository" "main" {
-  name = "${ECR_REPO_NAME}"
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  encryption_configuration {
-    encryption_type = "AES256"
-  }
-
-  tags = {
-    Name        = "${ECR_REPO_NAME}"
-    Environment = "LearnerLab"
-    CreatedBy   = "Jenkins"
-    Project     = "Microservices-E-Commerce"
-    CostCenter  = "Lab-Budget"
-  }
-}
-
-resource "aws_ecr_lifecycle_policy" "main" {
-  repository = aws_ecr_repository.main.name
-  
-  policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Keep last 5 images"
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 5
-        }
-        action = {
-          type = "expire"
-        }
-      },
-      {
-        rulePriority = 2
-        description  = "Remove untagged images after 1 day"
-        selection = {
-          tagStatus   = "untagged"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = 1
-        }
-        action = {
-          type = "expire"
-        }
-      }
-    ]
-  })
-}
-
-output "repository_url" {
-  value = aws_ecr_repository.main.repository_url
-}
-
-output "repository_name" {
-  value = aws_ecr_repository.main.name
-}
-EOF
-                        fi
-
-                        echo "=== Terraform Files ==="
-                        ls -la *.tf 2>/dev/null || echo "No .tf files"
+                        echo "Initializing Terraform..."
+                        terraform init -input=false -reconfigure
                     '''
                 }
             }
         }
 
-        stage('⚙️ Terraform Init') {
-            steps {
-                dir(env.TERRAFORM_DIR) {
-                    sh '''
-                        echo "=== Terraform Init ==="
-                        terraform init -input=false -reconfigure || true
-                    '''
-                }
+        stage('Terraform Plan') {
+            when {
+                expression { params.ACTION == 'plan' || params.ACTION == 'apply' }
             }
-        }
-
-        stage('📊 Terraform Plan') {
-            when { expression { params.ACTION == 'plan' || params.ACTION == 'apply' } }
             steps {
                 dir(env.TERRAFORM_DIR) {
                     sh """
-                        echo "=== Terraform Plan ==="
-                        terraform plan -var="repository_name=${params.ECR_REPO_NAME}" -var="region=${params.AWS_REGION}" -out=tfplan
-                        echo "=== Plan Summary ==="
-                        terraform show -no-color tfplan | head -n 20 || true
+                        echo "Running Terraform plan..."
+                        terraform plan -out=tfplan -var="repo_prefix=${params.ECR_REPO_PREFIX}" -var="region=${params.AWS_REGION}"
+                        terraform show -no-color tfplan
                     """
                     archiveArtifacts artifacts: '**/tfplan', fingerprint: true
                 }
             }
         }
 
-        stage('⚠️ Manual Approval (Apply/Destroy)') {
-            when { expression { (params.ACTION == 'apply' || params.ACTION == 'destroy') && !params.AUTO_APPROVE } }
-            steps {
-                timeout(time: 2, unit: 'MINUTES') {
-                    input(message: "Confirm ${params.ACTION} action?", ok: "Proceed")
-                }
+        stage('Terraform Apply') {
+            when {
+                expression { params.ACTION == 'apply' }
             }
-        }
-
-        stage('🚀 Terraform Apply') {
-            when { expression { params.ACTION == 'apply' } }
             steps {
                 dir(env.TERRAFORM_DIR) {
                     sh """
-                        echo "=== Terraform Apply ==="
-                        terraform apply tfplan ${params.AUTO_APPROVE ? "-auto-approve" : ""}
-                        terraform output -json || terraform output
+                        echo "Applying Terraform..."
+                        terraform apply ${params.AUTO_APPROVE ? '-auto-approve tfplan' : 'tfplan'}
+                        terraform output
                     """
                 }
             }
         }
 
-        stage('🗑️ Terraform Destroy') {
-            when { expression { params.ACTION == 'destroy' } }
+        stage('Terraform Destroy') {
+            when {
+                expression { params.ACTION == 'destroy' }
+            }
             steps {
                 dir(env.TERRAFORM_DIR) {
                     sh """
-                        echo "=== Terraform Destroy ==="
-                        terraform destroy ${params.AUTO_APPROVE ? "-auto-approve" : ""}
+                        echo "Destroying Terraform resources..."
+                        terraform destroy ${params.AUTO_APPROVE ? '-auto-approve' : ''} -var="repo_prefix=${params.ECR_REPO_PREFIX}" -var="region=${params.AWS_REGION}"
                     """
                 }
             }
@@ -268,12 +125,13 @@ EOF
     post {
         always {
             cleanWs()
+            echo "Pipeline finished"
         }
         success {
             echo "✅ Pipeline completed successfully"
         }
         failure {
-            echo "❌ Pipeline failed. Check logs"
+            echo "❌ Pipeline failed. Check Terraform configuration and AWS credentials"
         }
     }
 
