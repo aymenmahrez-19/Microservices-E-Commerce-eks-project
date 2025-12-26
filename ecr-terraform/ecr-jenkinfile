@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         TERRAFORM_DIR = 'ecr-terraform'
-        AWS_REGION    = 'us-east-1'   // default region, can be overridden by parameter
+        AWS_REGION    = 'us-east-1'
         GIT_EMAIL     = 'aymen.bendjaballah@univ-constantine2.dz'
         GIT_USER_NAME = 'aymenmahrez-19'
         GIT_REPO_NAME = 'Microservices-E-Commerce-eks-project'
@@ -13,7 +13,7 @@ pipeline {
         choice(
             name: 'ACTION',
             choices: ['plan', 'apply', 'destroy'],
-            description: 'Terraform action: plan = preview, apply = create/update, destroy = delete'
+            description: 'Terraform action: plan=preview, apply=create/update, destroy=delete'
         )
 
         string(
@@ -44,20 +44,14 @@ pipeline {
         stage('📥 Checkout Code') {
             steps {
                 checkout scm
-                sh """
-                    echo "=== Terraform Directory ==="
-                    ls -la ${TERRAFORM_DIR}/
-                """
+                sh "ls -la ${TERRAFORM_DIR}/"
             }
         }
 
         stage('⚙️ Terraform Init') {
             steps {
                 dir(TERRAFORM_DIR) {
-                    sh '''
-                        echo "=== Terraform Init ==="
-                        terraform init -input=false -reconfigure
-                    '''
+                    sh 'terraform init -input=false -reconfigure'
                 }
             }
         }
@@ -69,8 +63,7 @@ pipeline {
             steps {
                 dir(TERRAFORM_DIR) {
                     sh """
-                        echo "=== Terraform Plan ==="
-                        terraform plan -out=tfplan
+                        terraform plan -var="aws_region=${AWS_REGION}" -out=tfplan
                         terraform show -no-color tfplan | head -n 20
                     """
                     archiveArtifacts artifacts: '**/tfplan', fingerprint: true
@@ -85,7 +78,6 @@ pipeline {
             steps {
                 dir(TERRAFORM_DIR) {
                     sh """
-                        echo "=== Terraform Apply ==="
                         terraform apply ${params.AUTO_APPROVE ? '-auto-approve tfplan' : 'tfplan'}
                         terraform output
                     """
@@ -100,7 +92,6 @@ pipeline {
             steps {
                 dir(TERRAFORM_DIR) {
                     sh """
-                        echo "=== Terraform Destroy ==="
                         terraform destroy ${params.AUTO_APPROVE ? '-auto-approve' : ''}
                     """
                 }
@@ -110,17 +101,12 @@ pipeline {
 
     post {
         always {
-            echo "=== Pipeline Finished ==="
             dir(TERRAFORM_DIR) {
                 archiveArtifacts artifacts: '*.tfstate, *.tfstate.backup', fingerprint: true, allowEmptyArchive: true
             }
         }
-        failure {
-            echo "❌ Pipeline failed. Check logs!"
-        }
-        success {
-            echo "✅ Pipeline completed successfully."
-        }
+        failure { echo "❌ Pipeline failed" }
+        success { echo "✅ Pipeline completed successfully" }
     }
 
     options {

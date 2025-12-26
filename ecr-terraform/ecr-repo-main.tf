@@ -1,7 +1,3 @@
-provider "aws" {
-  region = "us-east-1"
-}
-
 locals {
   services = [
     "email-service",
@@ -42,14 +38,11 @@ resource "aws_ecr_repository" "microservices" {
 }
 
 output "ecr_repository_urls" {
-  value = {
-    for service, repo in aws_ecr_repository.microservices :
-    service => repo.repository_url
-  }
+  value       = { for service, repo in aws_ecr_repository.microservices : service => repo.repository_url }
   description = "URLs of all ECR repositories"
 }
 
 output "ecr_repository_names" {
-  value = [for repo in aws_ecr_repository.microservices : repo.name]
+  value       = [for repo in aws_ecr_repository.microservices : repo.name]
   description = "Names of all created ECR repositories"
 }
