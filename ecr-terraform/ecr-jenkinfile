@@ -6,45 +6,42 @@ pipeline {
         AWS_REGION    = 'us-east-1'
         GIT_EMAIL     = 'aymen.bendjaballah@univ-constantine2.dz'
         GIT_USER_NAME = 'aymenmahrez-19'
-        GIT_REPO_NAME = 'Microservices-E-Commerce-eks-project'
+        GIT_REPO_URL  = 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
     }
 
     parameters {
         choice(
             name: 'ACTION',
             choices: ['plan', 'apply', 'destroy'],
-            description: 'Terraform action: plan=preview, apply=create/update, destroy=delete'
-        )
-
-        string(
-            name: 'AWS_REGION',
-            defaultValue: 'us-east-1',
-            description: 'AWS region'
+            description: 'Terraform action'
         )
 
         booleanParam(
             name: 'AUTO_APPROVE',
             defaultValue: false,
-            description: 'Enable auto-approve for apply/destroy'
+            description: 'Auto approve apply/destroy'
         )
     }
 
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
     stages {
-        stage('🔍 AWS Credentials Check') {
+
+        stage('🔍 AWS Identity') {
             steps {
                 sh '''
-                    echo "=== AWS Credentials ==="
-                    aws configure set region ${AWS_REGION}
-                    aws configure set output json
                     aws sts get-caller-identity
                 '''
             }
         }
 
-        stage('📥 Checkout Code') {
+        stage('📥 Checkout SCM') {
             steps {
                 checkout scm
-                sh "ls -la ${TERRAFORM_DIR}/"
             }
         }
 
@@ -62,11 +59,11 @@ pipeline {
             }
             steps {
                 dir(TERRAFORM_DIR) {
-                    sh """
-                        terraform plan -var="aws_region=${AWS_REGION}" -out=tfplan
-                        terraform show -no-color tfplan | head -n 20
-                    """
-                    archiveArtifacts artifacts: '**/tfplan', fingerprint: true
+                    sh '''
+                        terraform plan \
+                          -var="aws_region=us-east-1" \
+                          -out=tfplan
+                    '''
                 }
             }
         }
@@ -79,8 +76,48 @@ pipeline {
                 dir(TERRAFORM_DIR) {
                     sh """
                         terraform apply ${params.AUTO_APPROVE ? '-auto-approve tfplan' : 'tfplan'}
-                        terraform output
                     """
+                }
+            }
+        }
+
+        stage('📝 Generate ECR Report') {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
+            steps {
+                dir(TERRAFORM_DIR) {
+                    sh '''
+                        echo "# ECR Repositories" > ECR_REPOSITORIES.md
+                        echo "" >> ECR_REPOSITORIES.md
+                        echo "## Repository URLs" >> ECR_REPOSITORIES.md
+                        terraform output -json ecr_repository_urls \
+                          | jq -r 'to_entries[] | "- **\\(.key)**: \\(.value)"' \
+                          >> ECR_REPOSITORIES.md
+                    '''
+                }
+            }
+        }
+
+        stage('📤 Push Report to GitHub') {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'github-creds',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN'
+                )]) {
+                    sh '''
+                        git config user.email "${GIT_EMAIL}"
+                        git config user.name "${GIT_USER_NAME}"
+
+                        git add ecr-terraform/ECR_REPOSITORIES.md
+                        git commit -m "docs: add ECR repositories report" || echo "No changes to commit"
+
+                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git HEAD:master
+                    '''
                 }
             }
         }
@@ -100,18 +137,11 @@ pipeline {
     }
 
     post {
-        always {
-            dir(TERRAFORM_DIR) {
-                archiveArtifacts artifacts: '*.tfstate, *.tfstate.backup', fingerprint: true, allowEmptyArchive: true
-            }
+        success {
+            echo '✅ Pipeline completed successfully'
         }
-        failure { echo "❌ Pipeline failed" }
-        success { echo "✅ Pipeline completed successfully" }
-    }
-
-    options {
-        timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        failure {
+            echo '❌ Pipeline failed'
+        }
     }
 }
