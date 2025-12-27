@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: recommendation-service
 spec:
-  replicas: 3  # ← CHANGED: Recommendation service often needs more replicas
+  replicas: 3
   selector:
     matchLabels:
       app: recommendation-service
@@ -13,11 +13,6 @@ spec:
         app: recommendation-service
     spec:
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: recommendation-service
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-recommendation-service:latest
@@ -28,38 +23,14 @@ spec:
         - name: PORT
           value: "8080"
         - name: PRODUCT_CATALOG_SERVICE_ADDR
-          value: "product-catalog-service:3550"  # ← ADDED: Dependency
-        - name: DISABLE_STATS
-          value: "1"     # ← OPTIONAL
-        - name: DISABLE_TRACING
-          value: "1"     # ← OPTIONAL
-        readinessProbe:
-          httpGet:                    # ← ADDED: HTTP probe for HTTP service
-            path: /health             # ← Health check endpoint
-            port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
-        livenessProbe:
-          httpGet:                    # ← ADDED: HTTP probe for HTTP service
-            path: /health
-            port: 8080
-          initialDelaySeconds: 20
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
+          value: "product-catalog-service:3550"
         resources:
           requests:
-            cpu: 200m                 # ← INCREASED: ML recommendations need more CPU
-            memory: 256Mi             # ← INCREASED
+            cpu: 200m
+            memory: 256Mi
           limits:
-            cpu: 500m                 # ← INCREASED
-            memory: 512Mi             # ← INCREASED
-        # Optional: Add security context for container
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
+            cpu: 500m
+            memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
@@ -70,7 +41,7 @@ spec:
   selector:
     app: recommendation-service
   ports:
-  - name: http        # ← CHANGED: Port 8080 is HTTP, not gRPC
-    port: 8080        # ← CHANGED: Match containerPort
-    targetPort: 8080  # ← CHANGED: Match containerPort
-    protocol: TCP     # ← ADDED
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP

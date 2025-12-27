@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: adservice
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: adservice
@@ -12,37 +12,23 @@ spec:
       labels:
         app: adservice
     spec:
-      serviceAccountName: default
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: adservice
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-ad-service:2
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-ad-service:latest
         ports:
-        - containerPort: 8080
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 10
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 20
-          periodSeconds: 10
+        - containerPort: 9555
+          name: http
+        env:
+        - name: PORT
+          value: "9555"
         resources:
           requests:
-            cpu: 100m
-            memory: 64Mi
-          limits:
             cpu: 200m
-            memory: 128Mi
+            memory: 180Mi
+          limits:
+            cpu: 300m
+            memory: 300Mi
 ---
 apiVersion: v1
 kind: Service
@@ -53,6 +39,7 @@ spec:
   selector:
     app: adservice
   ports:
-  - name: grpc
-    port: 5000
-    targetPort: 8080
+  - name: http
+    port: 9555
+    targetPort: 9555
+    protocol: TCP

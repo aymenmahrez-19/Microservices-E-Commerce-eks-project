@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: frontend
 spec:
-  replicas: 3  # ← CHANGED: Frontend typically needs more replicas
+  replicas: 3
   selector:
     matchLabels:
       app: frontend
@@ -13,11 +13,6 @@ spec:
         app: frontend
     spec:
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: frontend
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-frontend:latest
@@ -27,35 +22,6 @@ spec:
         env:
         - name: PORT
           value: "8080"
-        # Add environment variables for backend services
-        - name: PRODUCT_CATALOG_SERVICE_ADDR
-          value: "product-catalog-service:3550"
-        - name: CART_SERVICE_ADDR
-          value: "cartservice:7070"
-        - name: CURRENCY_SERVICE_ADDR
-          value: "currencyservice:7000"
-        - name: CHECKOUT_SERVICE_ADDR
-          value: "checkoutservice:5050"
-        - name: SHIPPING_SERVICE_ADDR
-          value: "shipping-service:50051"
-        - name: AD_SERVICE_ADDR
-          value: "adservice:9555"
-        readinessProbe:
-          httpGet:                    # ← ADDED: Handler type
-            path: /health             # ← Health check endpoint
-            port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
-        livenessProbe:
-          httpGet:                    # ← ADDED: Handler type
-            path: /health
-            port: 8080
-          initialDelaySeconds: 20
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
         resources:
           requests:
             cpu: 100m
@@ -63,24 +29,17 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
-        # Optional: Add container security context
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: frontend
 spec:
-  type: LoadBalancer  # ← CHANGED: Frontend typically needs external access
+  type: LoadBalancer
   selector:
     app: frontend
   ports:
-  - name: http        # ← CHANGED: Port 8080 is HTTP, not gRPC
-    port: 80          # ← CHANGED: External port 80 (HTTP standard)
-    targetPort: 8080  # ← Maps to container port 8080
+  - name: http
+    port: 80
+    targetPort: 8080
     protocol: TCP
-  # Optional: Add annotations for AWS Load Balancer
-  # annotations:
-  #   service.beta.kubernetes.io/aws-load-balancer-type: "nlb"

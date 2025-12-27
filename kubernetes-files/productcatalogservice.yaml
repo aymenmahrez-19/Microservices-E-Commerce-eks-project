@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: product-catalog-service
 spec:
-  replicas: 2  # ← CHANGED: Product catalog often needs more replicas
+  replicas: 2
   selector:
     matchLabels:
       app: product-catalog-service
@@ -13,42 +13,15 @@ spec:
         app: product-catalog-service
     spec:
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: product-catalog-service
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-product-catalog-service:latest
         ports:
-        - containerPort: 3550  # ← CHANGED: Standard port for product catalog service
+        - containerPort: 3550
           name: http
         env:
         - name: PORT
-          value: "3550"  # ← CHANGED
-        - name: DISABLE_STATS
-          value: "1"     # ← OPTIONAL: Disable stats if not needed
-        - name: DISABLE_TRACING
-          value: "1"     # ← OPTIONAL: Disable tracing if not needed
-        - name: DISABLE_PROFILER
-          value: "1"     # ← OPTIONAL: Disable profiler
-        readinessProbe:
-          httpGet:                    # ← ADDED: HTTP probe for HTTP service
-            path: /health             # ← Health check endpoint
-            port: 3550
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
-        livenessProbe:
-          httpGet:                    # ← ADDED: HTTP probe for HTTP service
-            path: /health
-            port: 3550
-          initialDelaySeconds: 20
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
+          value: "3550"
         resources:
           requests:
             cpu: 100m
@@ -56,10 +29,6 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
-        # Optional: Add security context for container
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -70,7 +39,7 @@ spec:
   selector:
     app: product-catalog-service
   ports:
-  - name: http        # ← CHANGED: Port 3550 is HTTP, not gRPC
-    port: 3550        # ← CHANGED: Match containerPort
-    targetPort: 3550  # ← CHANGED: Match containerPort
-    protocol: TCP     # ← ADDED
+  - name: http
+    port: 3550
+    targetPort: 3550
+    protocol: TCP

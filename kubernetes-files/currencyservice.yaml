@@ -13,36 +13,15 @@ spec:
         app: currencyservice
     spec:
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: currencyservice
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-currency-service:2
         ports:
-        - containerPort: 7000  # ← CHANGED: Microservices usually use 7000 for currency service
-          name: http
+        - containerPort: 7000
+          name: grpc
         env:
         - name: PORT
-          value: "7000"  # ← CHANGED: Match containerPort
-        readinessProbe:
-          httpGet:                    # ← ADDED: Handler type
-            path: /health             # ← Health check endpoint
-            port: 7000                # ← Match containerPort
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          failureThreshold: 3         # ← RECOMMENDED
-          timeoutSeconds: 5           # ← RECOMMENDED
-        livenessProbe:
-          httpGet:                    # ← ADDED: Handler type
-            path: /health             # ← Health check endpoint
-            port: 7000                # ← Match containerPort
-          initialDelaySeconds: 20
-          periodSeconds: 10
-          failureThreshold: 3         # ← RECOMMENDED
-          timeoutSeconds: 5           # ← RECOMMENDED
+          value: "7000"
         resources:
           requests:
             cpu: 100m
@@ -50,10 +29,6 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
-        # Optional: Add container security context
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -64,7 +39,7 @@ spec:
   selector:
     app: currencyservice
   ports:
-  - name: http        # ← CHANGED: If port 7000, it's likely HTTP not gRPC
-    port: 7000        # ← CHANGED: Should match containerPort
-    targetPort: 7000  # ← CHANGED: Should match containerPort
-    protocol: TCP     # ← ADDED: Explicit protocol
+  - name: grpc
+    port: 7000
+    targetPort: 7000
+    protocol: TCP

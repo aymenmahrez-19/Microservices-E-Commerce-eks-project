@@ -13,38 +13,15 @@ spec:
         app: emailservice
     spec:
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: emailservice
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:latest  # ← FIXED: Use static tag
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-email-service:latest
         ports:
         - containerPort: 8080
           name: http
         env:
         - name: PORT
           value: "8080"
-        - name: DISABLE_PROFILER
-          value: "1"
-        readinessProbe:
-          httpGet:                    # ← CHANGED: Port 8080 is HTTP, not gRPC
-            path: /health             # ← Health check endpoint
-            port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
-        livenessProbe:
-          httpGet:                    # ← CHANGED: Port 8080 is HTTP, not gRPC
-            path: /health
-            port: 8080
-          initialDelaySeconds: 20
-          periodSeconds: 10
-          failureThreshold: 3         # ← ADDED
-          timeoutSeconds: 5           # ← ADDED
         resources:
           requests:
             cpu: 100m
@@ -52,10 +29,6 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
-        # Optional: Add container security context
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -66,7 +39,7 @@ spec:
   selector:
     app: emailservice
   ports:
-  - name: http        # ← CHANGED: Port 8080 is HTTP
-    port: 8080        # ← CHANGED: Match containerPort
-    targetPort: 8080  # ← CHANGED: Match containerPort
-    protocol: TCP     # ← ADDED
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
