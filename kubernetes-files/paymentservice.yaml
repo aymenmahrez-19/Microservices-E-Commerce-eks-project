@@ -12,7 +12,6 @@ spec:
       labels:
         app: payment-service
     spec:
-      serviceAccountName: default
       terminationGracePeriodSeconds: 5
       securityContext:
         fsGroup: 1000
@@ -23,13 +22,23 @@ spec:
       - name: payment-service
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-payment-service:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 50051  # ← CHANGED: Standard gRPC port for payment service
+          name: grpc
+        env:
+        - name: PORT
+          value: "50051"  # ← CHANGED
         readinessProbe:
+          grpc:                    # ← CHANGED: gRPC probe for gRPC service
+            port: 50051
           initialDelaySeconds: 15
           periodSeconds: 10
+          failureThreshold: 3      # ← ADDED
         livenessProbe:
+          grpc:                    # ← CHANGED: gRPC probe for gRPC service
+            port: 50051
           initialDelaySeconds: 20
           periodSeconds: 10
+          failureThreshold: 3      # ← ADDED
         resources:
           requests:
             cpu: 100m
@@ -37,6 +46,10 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
+        # Optional: Add security context for container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -48,5 +61,6 @@ spec:
     app: payment-service
   ports:
   - name: grpc
-    port: 5000
-    targetPort: 8080
+    port: 50051       # ← CHANGED: Standard gRPC port
+    targetPort: 50051 # ← CHANGED: Match containerPort
+    protocol: TCP     # ← ADDED

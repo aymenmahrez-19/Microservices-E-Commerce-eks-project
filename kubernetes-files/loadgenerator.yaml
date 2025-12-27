@@ -12,31 +12,32 @@ spec:
       labels:
         app: load-generator
     spec:
-      serviceAccountName: default
       terminationGracePeriodSeconds: 5
-      securityContext:
-        fsGroup: 1000
-        runAsGroup: 1000
-        runAsNonRoot: true
-        runAsUser: 1000
       containers:
       - name: load-generator
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-load-generator:14
         ports:
         - containerPort: 8080
-        readinessProbe:
-          initialDelaySeconds: 15
-          periodSeconds: 10
-        livenessProbe:
-          initialDelaySeconds: 20
-          periodSeconds: 10
+          name: http
+        env:
+        - name: FRONTEND_ADDR
+          value: "frontend:8080"  # ← ADDED: Point to your frontend service
+        - name: USERS
+          value: "10"             # ← ADDED: Number of simulated users
+        - name: RATE
+          value: "10"             # ← ADDED: Requests per second
+        # Remove probes for load generator (not needed)
+        # readinessProbe and livenessProbe removed
         resources:
           requests:
-            cpu: 100m
-            memory: 64Mi
-          limits:
-            cpu: 200m
+            cpu: 200m             # ← INCREASED: Load generators need more CPU
             memory: 128Mi
+          limits:
+            cpu: 500m             # ← INCREASED
+            memory: 256Mi
+        # Optional: Add command if your image needs it
+        # command: ["locust"]
+        # args: ["-f", "locustfile.py", "--host=http://frontend:8080"]
 ---
 apiVersion: v1
 kind: Service
@@ -47,6 +48,7 @@ spec:
   selector:
     app: load-generator
   ports:
-  - name: grpc
-    port: 5000
-    targetPort: 8080
+  - name: http        # ← CHANGED: Port 8080 is HTTP, not gRPC
+    port: 8089        # ← CHANGED: Common load generator UI port (e.g., Locust uses 8089)
+    targetPort: 8089  # ← CHANGED: Match what your load generator exposes
+    protocol: TCP

@@ -12,7 +12,6 @@ spec:
       labels:
         app: shipping-service
     spec:
-      serviceAccountName: default
       terminationGracePeriodSeconds: 5
       securityContext:
         fsGroup: 1000
@@ -21,15 +20,36 @@ spec:
         runAsUser: 1000
       containers:
       - name: shipping-service
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-shipping-service:${BUILD_NUMBER}
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-shipping-service:latest
         ports:
         - containerPort: 8080
+          name: http
+        env:
+        - name: PORT
+          value: "8080"
+        - name: CARRIER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shipping-secrets
+              key: carrier-api-key
+        - name: CURRENCY_SERVICE_ADDR
+          value: "currencyservice:7000"
         readinessProbe:
+          httpGet:                    # ← HTTP probe for HTTP service
+            path: /health
+            port: 8080
           initialDelaySeconds: 15
           periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 5
         livenessProbe:
+          httpGet:                    # ← HTTP probe for HTTP service
+            path: /health
+            port: 8080
           initialDelaySeconds: 20
           periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 5
         resources:
           requests:
             cpu: 100m
@@ -47,6 +67,7 @@ spec:
   selector:
     app: shipping-service
   ports:
-  - name: grpc
-    port: 5000
+  - name: http
+    port: 8080
     targetPort: 8080
+    protocol: TCP
