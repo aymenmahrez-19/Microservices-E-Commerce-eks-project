@@ -21,7 +21,7 @@ spec:
         runAsUser: 1000
       containers:
       - name: load-generator
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-load-generator:13
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-load-generator:14
         ports:
         - containerPort: 8080
         readinessProbe:
