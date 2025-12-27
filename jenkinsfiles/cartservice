@@ -6,7 +6,6 @@ pipeline {
         AWS_ACCOUNT_ID = '851725560519'
         SERVICE_NAME = 'cartservice'
         ECR_REPO_NAME = 'aymen-cart-service'
-        // CORRECTED: Dockerfile is in src/cartservice/src/
         DOCKERFILE_BASE_PATH = 'src/cartservice'
         DOCKERFILE_DIR = 'src/cartservice/src'
         ECR_REPO_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
@@ -325,8 +324,39 @@ EOF
                         """
                     }
                 }
-            } 
+            }
         }
+        
+        stage('Manual Deployment Instructions') {
+            steps {
+                script {
+                    echo """
+                    📋 MANUAL DEPLOYMENT INSTRUCTIONS
+                    ==================================
+                    Your pipeline has completed successfully!
+                    
+                    To deploy to EKS manually, run:
+                    
+                    1. Update kubeconfig:
+                       aws eks update-kubeconfig --name [your-cluster-name] --region ${AWS_REGION}
+                    
+                    2. Deploy the service:
+                       kubectl apply -f ${K8S_FILES_DIR}/cartservice.yaml
+                    
+                    3. Verify deployment:
+                       kubectl get deployment cartservice
+                       kubectl get pods -l app=cartservice
+                    
+                    ==================================
+                    Service: ${SERVICE_NAME}
+                    ECR Image: ${ECR_REPO_URL}:${BUILD_NUMBER}
+                    Build: ${BUILD_NUMBER}
+                    ==================================
+                    """
+                }
+            }
+        }
+    }
     
     post {
         always {
@@ -342,6 +372,7 @@ EOF
             sh '''
                 echo "=== Cleaning Docker Cache ==="
                 docker system prune -f --volumes 2>/dev/null || true
+                rm -f /tmp/lifecycle-policy.json 2>/dev/null || true
             '''
         }
         
@@ -383,13 +414,5 @@ EOF
         retry(2)
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '10'))
-    }
-    
-    parameters {
-        booleanParam(
-            name: 'DEPLOY_TO_EKS',
-            defaultValue: false,
-            description: 'Deploy to EKS cluster after build'
-        )
     }
 }
