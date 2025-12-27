@@ -1,296 +1,57 @@
 pipeline {
     agent any
-    
+
     environment {
-        AWS_REGION = 'us-east-1'
-        AWS_ACCOUNT_ID = '851725560519'
-        SERVICE_NAME = 'loadgenerator'
-        ECR_REPO_NAME = 'aymen-load-generator'
-        GIT_EMAIL = 'aymen.bendjaballah@univ-constantine2.dz'
-        GIT_USER_NAME = 'aymenmahrez-19'
-        GIT_REPO = 'https://github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git'
+        AWS_REGION = "us-east-1"
+        ECR_REPO   = "851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-load-generator"
+        IMAGE_NAME = "load-generator"
     }
-    
+
     stages {
-        stage('Clean Workspace') {
+
+        stage('Checkout') {
             steps {
-                cleanWs()
+                checkout scm
             }
         }
-        
-        stage('Checkout SCM') {
-            steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/master']],
-                    extensions: [
-                        [$class: 'CloneOption', depth: 1, shallow: true],
-                        [$class: 'CleanBeforeCheckout']
-                    ],
-                    userRemoteConfigs: [[
-                        url: env.GIT_REPO
-                    ]]
-                ])
-            }
-        }
-        
+
         stage('Docker Build') {
             steps {
-                dir('src/loadgenerator') {
-                    sh '''
-                        echo "=== Building Load Generator ==="
-                        docker build -t load-generator:${BUILD_NUMBER} -t load-generator:latest .
-                        echo "✅ Docker image built"
-                    '''
+                dir('loadgenerator') {
+                    sh 'docker build -t ${IMAGE_NAME}:latest .'
                 }
             }
         }
-        
-        stage('Login to ECR') {
-            steps {
-                sh """
-                    echo "=== Logging into ECR ==="
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                    echo "✅ Logged into ECR"
-                """
-            }
-        }
-        
+
         stage('Push to ECR') {
             steps {
-                script {
-                    def ecrUrl = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
-                    
-                    sh """
-                        echo "=== Pushing to ECR ==="
-                        
-                        # Create ECR repository if it doesn't exist
-                        if ! aws ecr describe-repositories --repository-names ${ECR_REPO_NAME} --region ${AWS_REGION} 2>/dev/null; then
-                            echo "Creating ECR repository: ${ECR_REPO_NAME}"
-                            aws ecr create-repository \
-                                --repository-name ${ECR_REPO_NAME} \
-                                --region ${AWS_REGION} \
-                                --image-tag-mutability MUTABLE \
-                                --tags Key=Environment,Value=LearnerLab
-                        fi
-                        
-                        # Tag and push
-                        docker tag load-generator:${BUILD_NUMBER} ${ecrUrl}:${BUILD_NUMBER}
-                        docker tag load-generator:latest ${ecrUrl}:latest
-                        
-                        docker push ${ecrUrl}:${BUILD_NUMBER}
-                        docker push ${ecrUrl}:latest
-                        
-                        echo "✅ Pushed: ${ecrUrl}:${BUILD_NUMBER}"
-                        echo "✅ Pushed: ${ecrUrl}:latest"
-                        
-                        # List ECR images
-                        echo "=== ECR Images ==="
-                        aws ecr list-images \
-                            --repository-name ${ECR_REPO_NAME} \
-                            --region ${AWS_REGION} \
-                            --query "imageIds[].imageTag" \
-                            --output text 2>/dev/null || echo "No images found"
-                    """
-                }
+                sh '''
+                  aws ecr get-login-password --region $AWS_REGION | \
+                  docker login --username AWS --password-stdin 851725560519.dkr.ecr.us-east-1.amazonaws.com
+
+                  docker tag ${IMAGE_NAME}:latest $ECR_REPO:latest
+                  docker push $ECR_REPO:latest
+                '''
             }
         }
-        
-        stage('Update Kubernetes YAML') {
+
+        stage('Update YAML & Git Push') {
             steps {
-                script {
-                    echo "=== Updating Kubernetes YAML ==="
-                    
-                    dir('kubernetes-files') {
-                        def yamlFile = 'loadgenerator.yaml'
-                        def ecrUrl = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_NUMBER}"
-                        
-                        // Check if YAML file exists
-                        sh """
-                            if [ ! -f "${yamlFile}" ]; then
-                                echo "⚠️ ${yamlFile} not found, creating basic YAML..."
-                                cat > ${yamlFile} << 'EOF'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: loadgenerator
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: loadgenerator
-  template:
-    metadata:
-      labels:
-        app: loadgenerator
-    spec:
-      containers:
-      - name: loadgenerator
-        image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:latest
-        ports:
-        - containerPort: 8089
-        env:
-        - name: TARGET_HOST
-          value: "frontend"
-        - name: LOCUST_USERS
-          value: "10"
-        - name: LOCUST_SPAWN_RATE
-          value: "1"
-        resources:
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
-          requests:
-            cpu: "250m"
-            memory: "256Mi"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: loadgenerator
-  namespace: default
-spec:
-  selector:
-    app: loadgenerator
-  ports:
-  - port: 8089
-    targetPort: 8089
-  type: ClusterIP
-EOF
-                                echo "✅ Created ${yamlFile}"
-                            else
-                                echo "✅ Found ${yamlFile}"
-                            fi
-                            
-                            # Update image tag
-                            sed -i "s#image:.*#image: ${ecrUrl}#g" ${yamlFile}
-                            
-                            echo "=== Updated YAML ==="
-                            grep -A2 "image:" ${yamlFile}
-                        """
-                    }
-                }
-            }
-        }
-        
-        stage('Commit and Push to Git - FIXED') {
-            steps {
-                script {
+                dir('kubernetes-files') {
                     withCredentials([string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')]) {
-                        sh """
-                            echo "=== Committing changes to Git ==="
-                            
-                            # Configure git
-                            git config --global user.email "${GIT_EMAIL}"
-                            git config --global user.name "${GIT_USER_NAME}"
-                            
-                            # Check current branch
-                            echo "Current branch:"
-                            git branch -a
-                            
-                            # Make sure we're on master branch
-                            git checkout master 2>/dev/null || git checkout -b master
-                            
-                            # Add and commit
-                            git add kubernetes-files/loadgenerator.yaml
-                            git commit -m "LearnerLab: Update ${ECR_REPO_NAME} to build-${BUILD_NUMBER}"
-                            
-                            # Push to GitHub - FIXED COMMAND
-                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/Microservices-E-Commerce-eks-project.git HEAD:master
-                            
-                            echo "✅ Changes pushed to Git repository"
-                            echo "✅ Build ${BUILD_NUMBER} completed successfully!"
-                        """
+                        sh '''
+                          git config user.email "aymen.bendjaballah@univ-constantine2.dz"
+                          git config user.name "aymenmahrez-19"
+
+                          sed -i "s#image:.*#image: ${ECR_REPO}:latest#g" loadgenerator.yaml
+
+                          git add loadgenerator.yaml
+                          git commit -m "Update load-generator image" || echo "No changes"
+                          git push https://${GIT_TOKEN}@github.com/aymenmahrez-19/Microservices-E-Commerce-eks-project.git HEAD:master
+                        '''
                     }
                 }
             }
         }
-        
-        stage('Learner Lab Cost Summary') {
-            steps {
-                script {
-                    echo """
-                    💰 LEARNER LAB BUDGET SUMMARY
-                    ============================
-                    Service: ${SERVICE_NAME}
-                    ECR Repository: ${ECR_REPO_NAME}
-                    Image Tag: ${BUILD_NUMBER}
-                    
-                    ✅ SUCCESS: Load generator built and pushed to ECR
-                    
-                    COST NOTES:
-                    - ECR storage: ~\\$0.10 per GB-month
-                    - Current image size: ~200MB
-                    - Monthly cost: ~\\$0.02
-                    
-                    NEXT STEPS:
-                    1. Deploy: kubectl apply -f kubernetes-files/loadgenerator.yaml
-                    2. Monitor: kubectl get pods -l app=loadgenerator
-                    3. Access: kubectl port-forward svc/loadgenerator 8089:8089
-                    4. Clean old images: aws ecr batch-delete-image
-                    ============================
-                    """
-                }
-            }
-        }
-    }
-    
-    post {
-        always {
-            // Cleanup Docker to save space
-            sh '''
-                echo "=== Cleaning up Docker ==="
-                docker system prune -f 2>/dev/null || true
-            '''
-        }
-        
-        success {
-            echo """
-            ✅ LOAD GENERATOR PIPELINE SUCCESS!
-            ====================================
-            Build: ${BUILD_NUMBER}
-            Image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_NUMBER}
-            
-            To deploy to EKS:
-            kubectl apply -f kubernetes-files/loadgenerator.yaml
-            
-            To access Locust UI:
-            kubectl port-forward svc/loadgenerator 8089:8089
-            Then open: http://localhost:8089
-            ====================================
-            """
-        }
-        
-        failure {
-            echo """
-            ❌ PIPELINE FAILED
-            ==================
-            Check the specific stage that failed above.
-            
-            Common issues:
-            1. Git push: Check GitHub token permissions
-            2. ECR: Repository may not exist
-            3. Docker: Build failure
-            4. AWS: Credentials not configured
-            
-            Debug commands:
-            - git status
-            - aws sts get-caller-identity
-            - docker images | grep load-generator
-            ==================
-            """
-        }
-        
-        cleanup {
-            cleanWs()
-        }
-    }
-    
-    options {
-        timeout(time: 30, unit: 'MINUTES')
-        retry(1)
-        disableConcurrentBuilds()
     }
 }
