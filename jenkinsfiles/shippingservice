@@ -302,35 +302,30 @@ EOF
         }
         
         stage('🔀 Commit & Push to Git') {
-            steps {
-                script {
-                    // ✅ التصحيح: استخدام string بدلاً من usernamePassword
-                    withCredentials([
-                        string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')
-                    ]) {
-                        sh """
-                            echo "=== Committing to Git ==="
-                            
-                            # Configure git
-                            git config --global user.email "${GIT_EMAIL}"
-                            git config --global user.name "${GIT_USER_NAME}"
-                            
-                            # Ensure we're on master branch
-                            git checkout master 2>/dev/null || git checkout -b master
-                            
-                            # Add and commit
-                            git add kubernetes-files/${YAML_FILE}
-                            git commit -m "LearnerLab: Update ${IMAGE_NAME} to build-${BUILD_NUMBER}" || echo "No changes to commit"
-                            
-                            # Push to GitHub
-                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
-                            
-                            echo "✅ Changes pushed to GitHub"
-                        """
-                    }
-                }
-            }
+    steps {
+        script {
+            sh """
+                echo "=== Committing to Git ==="
+                
+                # Configure git
+                git config --global user.email "${GIT_EMAIL}"
+                git config --global user.name "${GIT_USER_NAME}"
+                
+                # Ensure we're on master branch
+                git checkout master 2>/dev/null || git checkout -b master
+                
+                # Add and commit
+                git add kubernetes-files/${YAML_FILE}
+                git commit -m "LearnerLab: Update ${IMAGE_NAME} to build-${BUILD_NUMBER}" || echo "No changes to commit"
+                
+                # ⚠️ Note: This requires git to be pre-configured with credentials
+                git push origin master
+                
+                echo "✅ Changes pushed to GitHub"
+            """
         }
+    }
+}
         
         stage('💰 Learner Lab Budget Summary') {
             steps {
