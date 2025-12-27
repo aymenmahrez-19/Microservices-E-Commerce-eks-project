@@ -57,7 +57,7 @@ pipeline {
             steps {
                 dir('kubernetes-files') {
                     withCredentials([usernamePassword(
-                        credentialsId: 'github-creds',
+                        credentialsId: '',
                         usernameVariable: 'GIT_USER',
                         passwordVariable: 'GIT_TOKEN'
                     )]) {
