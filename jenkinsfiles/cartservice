@@ -327,31 +327,6 @@ EOF
                 }
             }
         }
-        
-        stage('Deploy to EKS (Optional)') {
-            when {
-                expression { params.DEPLOY_TO_EKS == true }
-            }
-            steps {
-                script {
-                    sh """
-                        echo "=== Deploying to EKS ==="
-                        
-                        # Update kubeconfig for EKS
-                        aws eks update-kubeconfig --name learner-lab-cluster --region ${AWS_REGION}
-                        
-                        # Deploy the service
-                        kubectl apply -f "${K8S_FILES_DIR}/cartservice.yaml"
-                        
-                        # Verify deployment
-                        echo "=== Deployment Status ==="
-                        kubectl get deployment cartservice
-                        kubectl get pods -l app=cartservice
-                    """
-                }
-            }
-        }
-    }
     
     post {
         always {
