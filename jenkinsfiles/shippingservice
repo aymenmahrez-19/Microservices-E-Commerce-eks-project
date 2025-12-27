@@ -244,7 +244,7 @@ spec:
     spec:
       containers:
       - name: shipping-service
-        image: ${REPO_URL}:latest  # Will be updated by Jenkins
+        image: ${REPO_URL}:latest
         ports:
         - containerPort: 50051
         env:
@@ -304,12 +304,9 @@ EOF
         stage('🔀 Commit & Push to Git') {
             steps {
                 script {
+                    // ✅ التصحيح: استخدام string بدلاً من usernamePassword
                     withCredentials([
-                        usernamePassword(
-                            credentialsId: 'my-git-pattoken',
-                            usernameVariable: 'GIT_USER',
-                            passwordVariable: 'GIT_TOKEN'
-                        )
+                        string(credentialsId: 'my-git-pattoken', variable: 'GIT_TOKEN')
                     ]) {
                         sh """
                             echo "=== Committing to Git ==="
@@ -326,7 +323,7 @@ EOF
                             git commit -m "LearnerLab: Update ${IMAGE_NAME} to build-${BUILD_NUMBER}" || echo "No changes to commit"
                             
                             # Push to GitHub
-                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+                            git push https://${GIT_USER_NAME}:${GIT_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
                             
                             echo "✅ Changes pushed to GitHub"
                         """
@@ -348,9 +345,9 @@ EOF
                     ✅ SUCCESS: Image built and pushed to ECR
                     
                     📊 ESTIMATED COST:
-                    - ECR Storage: ~\\$0.02/month (200MB image)
+                    - ECR Storage: ~\\\$0.02/month (200MB image)
                     - Lifecycle: Keeps only 5 images
-                    - Total for 11 services: ~\\$0.22/month
+                    - Total for 11 services: ~\\\$0.22/month
                     
                     🎯 DEPLOYMENT COMMAND:
                     kubectl apply -f kubernetes-files/${YAML_FILE}
