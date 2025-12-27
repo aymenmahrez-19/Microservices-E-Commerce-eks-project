@@ -12,7 +12,6 @@ spec:
       labels:
         app: checkoutservice
     spec:
-      serviceAccountName: default
       terminationGracePeriodSeconds: 5
       securityContext:
         fsGroup: 1000
@@ -24,15 +23,39 @@ spec:
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-checkout-service:latest
         ports:
         - containerPort: 8080
+          name: http  # ← Added name for clarity
         env:
         - name: PORT
           value: "8080"
+        # Add environment variables for other services if needed
+        - name: CART_SERVICE_ADDR
+          value: "cartservice:7070"
+        - name: PRODUCT_CATALOG_SERVICE_ADDR
+          value: "product-catalog-service:3550"
+        - name: CURRENCY_SERVICE_ADDR
+          value: "currencyservice:7000"
+        - name: SHIPPING_SERVICE_ADDR
+          value: "shipping-service:50051"
+        - name: EMAIL_SERVICE_ADDR
+          value: "emailservice:8080"
+        - name: PAYMENT_SERVICE_ADDR
+          value: "payment-service:50051"
         readinessProbe:
+          httpGet:                    # ← ADDED: Handler type
+            path: /health             # ← Change path based on your app
+            port: 8080
           initialDelaySeconds: 15
           periodSeconds: 10
+          failureThreshold: 3         # ← RECOMMENDED
+          timeoutSeconds: 5           # ← RECOMMENDED
         livenessProbe:
+          httpGet:                    # ← ADDED: Handler type
+            path: /health             # ← Change path based on your app
+            port: 8080
           initialDelaySeconds: 20
           periodSeconds: 10
+          failureThreshold: 3         # ← RECOMMENDED
+          timeoutSeconds: 5           # ← RECOMMENDED
         resources:
           requests:
             cpu: 100m
@@ -40,6 +63,10 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
+        # Optional: Add security context for container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -50,6 +77,7 @@ spec:
   selector:
     app: checkoutservice
   ports:
-  - name: grpc
-    port: 5000
-    targetPort: 8080
+  - name: http        # ← Changed from "grpc" to "http" since port 8080 is typically HTTP
+    port: 8080        # ← CHANGED: Should match containerPort (8080 not 5000)
+    targetPort: 8080  # ← CHANGED: Should match containerPort
+    protocol: TCP     # ← RECOMMENDED: Explicit protocol

@@ -12,7 +12,6 @@ spec:
       labels:
         app: currencyservice
     spec:
-      serviceAccountName: default
       terminationGracePeriodSeconds: 5
       securityContext:
         fsGroup: 1000
@@ -23,16 +22,27 @@ spec:
       - name: currencyservice
         image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-currency-service:2
         ports:
-        - containerPort: 8080
+        - containerPort: 7000  # ← CHANGED: Microservices usually use 7000 for currency service
+          name: http
         env:
         - name: PORT
-          value: "8080"
+          value: "7000"  # ← CHANGED: Match containerPort
         readinessProbe:
+          httpGet:                    # ← ADDED: Handler type
+            path: /health             # ← Health check endpoint
+            port: 7000                # ← Match containerPort
           initialDelaySeconds: 15
           periodSeconds: 10
+          failureThreshold: 3         # ← RECOMMENDED
+          timeoutSeconds: 5           # ← RECOMMENDED
         livenessProbe:
+          httpGet:                    # ← ADDED: Handler type
+            path: /health             # ← Health check endpoint
+            port: 7000                # ← Match containerPort
           initialDelaySeconds: 20
           periodSeconds: 10
+          failureThreshold: 3         # ← RECOMMENDED
+          timeoutSeconds: 5           # ← RECOMMENDED
         resources:
           requests:
             cpu: 100m
@@ -40,6 +50,10 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
+        # Optional: Add container security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
 ---
 apiVersion: v1
 kind: Service
@@ -50,6 +64,7 @@ spec:
   selector:
     app: currencyservice
   ports:
-  - name: grpc
-    port: 5000
-    targetPort: 8080
+  - name: http        # ← CHANGED: If port 7000, it's likely HTTP not gRPC
+    port: 7000        # ← CHANGED: Should match containerPort
+    targetPort: 7000  # ← CHANGED: Should match containerPort
+    protocol: TCP     # ← ADDED: Explicit protocol
