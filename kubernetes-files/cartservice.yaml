@@ -21,7 +21,7 @@ spec:
         runAsUser: 1000
       containers:
       - name: cartservice
-        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/cartservice:2
+        image: 851725560519.dkr.ecr.us-east-1.amazonaws.com/cartservice:3
         ports:
         - containerPort: 8080
         env:
