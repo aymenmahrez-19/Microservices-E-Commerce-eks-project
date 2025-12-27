@@ -6,11 +6,14 @@ pipeline {
         AWS_ACCOUNT_ID = "851725560519"
         ECR_REPO_NAME = "aymen-load-generator"
         ECR_REPO_URL = "851725560519.dkr.ecr.us-east-1.amazonaws.com/aymen-load-generator"
-        IMAGE_NAME = "loadgenerator"
+        IMAGE_NAME = "load-generator"
         SERVICE_NAME = "load-generator"
         GIT_EMAIL = "aymen.bendjaballah@univ-constantine2.dz"
         GIT_USER_NAME = "aymenmahrez-19"
         GIT_REPO_NAME = "Microservices-E-Commerce-eks-project"
+        // Fixed paths based on your structure
+        DOCKERFILE_PATH = "src/loadgenerator"  // Your actual path
+        YAML_FILE = "loadgenerator.yaml"       // Your actual YAML file
         // Learner Lab cost control
         MAX_ECR_IMAGES = "5"
     }
@@ -34,6 +37,8 @@ pipeline {
                     ECR: ${ECR_REPO_URL}
                     Image: ${IMAGE_NAME}
                     Build: ${BUILD_NUMBER}
+                    Dockerfile: ${DOCKERFILE_PATH}
+                    YAML: ${YAML_FILE}
                     Region: ${AWS_REGION}
                     Learner Lab Budget Aware
                     ====================================
@@ -65,93 +70,50 @@ pipeline {
                         url: "https://github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git"
                     ]]
                 ])
-            }
-        }
+                
+                // Verify the structure exists
+                sh """
+                    echo "=== Verifying Project Structure ==="
+                    echo "Checking Dockerfile at: ${DOCKERFILE_PATH}/Dockerfile"
+                    
+                    if [ -f "${DOCKERFILE_PATH}/Dockerfile" ]; then
+                        echo "✅ Dockerfile found at ${DOCKERFILE_PATH}/Dockerfile"
+                        echo "=== Dockerfile Content ==="
+                        cat "${DOCKERFILE_PATH}/Dockerfile"
+                    else
+                        echo "❌ Dockerfile not found at ${DOCKERFILE_PATH}/Dockerfile"
+                        echo "Creating minimal Dockerfile..."
+                        
+                        # Create a proper load generator Dockerfile
+                        mkdir -p "${DOCKERFILE_PATH}"
+                        cat > "${DOCKERFILE_PATH}/Dockerfile" << 'EOF'
+FROM alpine:latest
 
-        stage('🔍 Verify Dockerfile Exists') {
-            steps {
-                script {
-                    sh """
-                        echo "=== Checking Dockerfile ==="
-                        
-                        # Try multiple possible locations
-                        POSSIBLE_PATHS=(
-                            "src/${IMAGE_NAME}"
-                            "${IMAGE_NAME}"
-                            "src/load-generator"
-                            "load-generator"
-                        )
-                        
-                        DOCKERFILE_FOUND=""
-                        DOCKERFILE_PATH=""
-                        
-                        for path in "\${POSSIBLE_PATHS[@]}"; do
-                            if [ -d "\${path}" ]; then
-                                echo "Checking directory: \${path}"
-                                # Look for Dockerfile in this directory
-                                if [ -f "\${path}/Dockerfile" ]; then
-                                    DOCKERFILE_FOUND="\${path}/Dockerfile"
-                                    DOCKERFILE_PATH="\${path}"
-                                    break
-                                elif [ -f "\${path}/src/Dockerfile" ]; then
-                                    DOCKERFILE_FOUND="\${path}/src/Dockerfile"
-                                    DOCKERFILE_PATH="\${path}/src"
-                                    break
-                                fi
-                            fi
-                        done
-                        
-                        if [ -n "\${DOCKERFILE_FOUND}" ]; then
-                            echo "✅ Dockerfile found at: \${DOCKERFILE_FOUND}"
-                            echo "=== Dockerfile Preview ==="
-                            head -20 "\${DOCKERFILE_FOUND}"
-                            
-                            # Check Dockerfile content
-                            if grep -q "locust" "\${DOCKERFILE_FOUND}" || grep -q "python" "\${DOCKERFILE_FOUND}"; then
-                                echo "✅ Dockerfile appears to be for load generator"
-                            else
-                                echo "⚠️ Dockerfile may not be for load generator"
-                            fi
-                        else
-                            echo "❌ Dockerfile not found in common locations"
-                            echo "Creating minimal Dockerfile for load generator..."
-                            
-                            # Create directory if it doesn't exist
-                            mkdir -p "src/${IMAGE_NAME}/src"
-                            DOCKERFILE_PATH="src/${IMAGE_NAME}/src"
-                            
-                            # Create proper load generator Dockerfile
-                            cat > "\${DOCKERFILE_PATH}/Dockerfile" << 'EOF'
-FROM python:3.11-slim
+# Install Python and required packages
+RUN apk add --no-cache python3 py3-pip curl
 
+# Install locust for load testing
+RUN pip3 install locust==2.17.0
+
+# Create app directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
+# Create a simple locustfile for testing
 COPY locustfile.py .
 
-# Expose Locust UI port
+# Expose Locust web UI port
 EXPOSE 8089
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
   CMD curl -f http://localhost:8089/ || exit 1
 
-# Run Locust
+# Default command - will be overridden by Kubernetes args
 CMD ["locust", "--host=http://frontend:80", "--web-port=8089"]
 EOF
-                            
-                            # Create requirements.txt
-                            cat > "\${DOCKERFILE_PATH}/requirements.txt" << 'EOF'
-locust==2.17.0
-requests==2.31.0
-EOF
-                            
-                            # Create sample locustfile.py
-                            cat > "\${DOCKERFILE_PATH}/locustfile.py" << 'EOF'
+                        
+                        # Create a sample locustfile
+                        cat > "${DOCKERFILE_PATH}/locustfile.py" << 'EOF'
 from locust import HttpUser, task, between
 
 class WebsiteUser(HttpUser):
@@ -169,59 +131,47 @@ class WebsiteUser(HttpUser):
     def view_cart(self):
         self.client.get("/api/cart")
 EOF
-                            
-                            echo "✅ Created load generator Dockerfile and related files"
-                            echo "DOCKERFILE_PATH=\${DOCKERFILE_PATH}" > dockerfile.env
-                        fi
                         
-                        # If we found a Dockerfile, save its path
-                        if [ -n "\${DOCKERFILE_PATH}" ]; then
-                            echo "DOCKERFILE_PATH=\${DOCKERFILE_PATH}" > dockerfile.env
-                        else
-                            # Default fallback
-                            echo "DOCKERFILE_PATH=src/${IMAGE_NAME}/src" > dockerfile.env
-                        fi
-                    """
+                        echo "✅ Created Dockerfile and locustfile.py"
+                    fi
                     
-                    // Load the Dockerfile path
-                    load 'dockerfile.env'
-                }
+                    echo ""
+                    echo "Checking YAML file at: kubernetes-files/${YAML_FILE}"
+                    if [ -f "kubernetes-files/${YAML_FILE}" ]; then
+                        echo "✅ YAML file found"
+                    else
+                        echo "⚠️ YAML file not found, will be created during pipeline"
+                    fi
+                """
             }
         }
 
         stage('🐳 Docker Build') {
             steps {
-                script {
-                    sh """
-                        echo "=== Building Docker Image ==="
-                        echo "Path: ${DOCKERFILE_PATH}"
-                        
-                        if [ ! -d "${DOCKERFILE_PATH}" ]; then
-                            echo "❌ Directory not found: ${DOCKERFILE_PATH}"
-                            echo "Creating it..."
-                            mkdir -p "${DOCKERFILE_PATH}"
-                        fi
-                        
-                        cd "${DOCKERFILE_PATH}"
-                        
-                        echo "=== Directory Contents ==="
-                        ls -la
-                        
-                        # Clean previous builds
-                        docker system prune -f 2>/dev/null || true
-                        
-                        # Build with multiple tags
-                        docker build \\
-                            -t ${IMAGE_NAME}:\${BUILD_NUMBER} \\
-                            -t ${IMAGE_NAME}:latest \\
-                            -t ${IMAGE_NAME}:learner-lab-\${BUILD_NUMBER} \\
-                            --build-arg BUILDKIT_INLINE_CACHE=1 \\
-                            .
-                        
-                        echo "✅ Image built successfully"
-                        echo "=== Built Images ==="
-                        docker images | grep ${IMAGE_NAME}
-                    """
+                dir(env.DOCKERFILE_PATH) {
+                    script {
+                        sh """
+                            echo "=== Building Docker Image ==="
+                            echo "Path: \$(pwd)"
+                            echo "Files:"
+                            ls -la
+                            
+                            # Clean previous builds
+                            docker system prune -f 2>/dev/null || true
+                            
+                            # Build with multiple tags
+                            docker build \\
+                                -t ${IMAGE_NAME}:\${BUILD_NUMBER} \\
+                                -t ${IMAGE_NAME}:latest \\
+                                -t ${IMAGE_NAME}:learner-lab-\${BUILD_NUMBER} \\
+                                --build-arg BUILDKIT_INLINE_CACHE=1 \\
+                                .
+                            
+                            echo "✅ Image built successfully"
+                            echo "=== Built Images ==="
+                            docker images | grep ${IMAGE_NAME}
+                        """
+                    }
                 }
             }
         }
@@ -311,105 +261,84 @@ EOF
             steps {
                 script {
                     dir('kubernetes-files') {
-                        def yamlFile = "loadgenerator.yaml"
-                        
                         sh """
                             echo "=== Updating Kubernetes YAML ==="
                             
                             # Check if YAML file exists
-                            if [ ! -f "${yamlFile}" ]; then
-                                echo "⚠️ ${yamlFile} not found, creating template..."
-                                cat > ${yamlFile} << 'EOF'
+                            if [ ! -f "${YAML_FILE}" ]; then
+                                echo "⚠️ ${YAML_FILE} not found, creating from your template..."
+                                # Use your actual YAML structure
+                                cat > ${YAML_FILE} << 'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: loadgenerator
-  namespace: default
-  labels:
-    app: loadgenerator
-    environment: learner-lab
+  name: load-generator
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: loadgenerator
+      app: load-generator
   template:
     metadata:
       labels:
-        app: loadgenerator
+        app: load-generator
     spec:
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
       containers:
-      - name: loadgenerator
+      - name: load-generator
         image: ${ECR_REPO_URL}:latest
         ports:
-        - containerPort: 8089
-        env:
-        - name: LOCUST_MODE
-          value: "standalone"
-        - name: TARGET_HOST
-          value: "http://frontend:80"
-        - name: LOCUST_USERS
-          value: "10"
-        - name: LOCUST_SPAWN_RATE
-          value: "1"
-        - name: LOCUST_RUN_TIME
-          value: "5m"
-        - name: SERVICE_NAME
-          value: "loadgenerator"
-        resources:
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
-          requests:
-            cpu: "250m"
-            memory: "256Mi"
-        command: ["locust"]
-        args:
-          - "--host=\$(TARGET_HOST)"
-          - "--users=\$(LOCUST_USERS)"
-          - "--spawn-rate=\$(LOCUST_SPAWN_RATE)"
-          - "--run-time=\$(LOCUST_RUN_TIME)"
-          - "--web-port=8089"
-          - "--headless"
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 8089
-          initialDelaySeconds: 30
-          periodSeconds: 10
+        - containerPort: 8080
         readinessProbe:
-          httpGet:
-            path: /
-            port: 8089
-          initialDelaySeconds: 10
-          periodSeconds: 5
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: loadgenerator
-  namespace: default
+  name: load-generator
 spec:
-  selector:
-    app: loadgenerator
-  ports:
-  - port: 8089
-    targetPort: 8089
   type: ClusterIP
+  selector:
+    app: load-generator
+  ports:
+  - name: grpc
+    port: 5000
+    targetPort: 8080
 EOF
-                                echo "✅ Created ${yamlFile}"
+                                echo "✅ Created ${YAML_FILE} using your template"
                             else
-                                echo "✅ Found ${yamlFile}"
+                                echo "✅ Found ${YAML_FILE}"
+                                echo "=== Current YAML Content ==="
+                                cat ${YAML_FILE}
                             fi
                             
                             # Update image tag
-                            sed -i "s|image:.*|image: ${ECR_REPO_URL}:${BUILD_NUMBER}|g" ${yamlFile}
+                            sed -i "s|image:.*|image: ${ECR_REPO_URL}:${BUILD_NUMBER}|g" ${YAML_FILE}
                             
-                            echo "=== Updated Image Tag ==="
-                            grep "image:" ${yamlFile}
                             echo ""
-                            echo "=== YAML Preview ==="
-                            head -30 ${yamlFile}
+                            echo "=== Updated Image Tag ==="
+                            grep "image:" ${YAML_FILE}
+                            
+                            echo ""
+                            echo "=== Updated YAML Preview ==="
+                            head -40 ${YAML_FILE}
                         """
                     }
                 }
@@ -431,7 +360,7 @@ EOF
                             git checkout master 2>/dev/null || git checkout -b master
                             
                             # Add and commit
-                            git add kubernetes-files/loadgenerator.yaml
+                            git add kubernetes-files/${YAML_FILE}
                             git commit -m "LearnerLab: Update ${SERVICE_NAME} to build-${BUILD_NUMBER}" || echo "No changes to commit"
                             
                             # Push to GitHub
@@ -461,14 +390,17 @@ EOF
                     - Lifecycle: Keeps only ${MAX_ECR_IMAGES} images
                     
                     🎯 DEPLOYMENT COMMAND:
-                    kubectl apply -f kubernetes-files/loadgenerator.yaml
+                    kubectl apply -f kubernetes-files/${YAML_FILE}
                     
-                    🔍 ACCESS LOAD TEST UI:
-                    kubectl port-forward svc/loadgenerator 8089:8089
-                    Open: http://localhost:8089
+                    🔍 VERIFICATION:
+                    kubectl get pods -l app=load-generator
+                    kubectl logs -f deployment/load-generator
+                    
+                    📊 MONITORING:
+                    kubectl port-forward svc/load-generator 5000:8080
                     
                     🧹 CLEANUP (When done):
-                    kubectl delete -f kubernetes-files/loadgenerator.yaml
+                    kubectl delete -f kubernetes-files/${YAML_FILE}
                     ===========================================
                     """
                 }
@@ -482,7 +414,7 @@ EOF
             sh '''
                 echo "=== Cleaning up ==="
                 docker system prune -f 2>/dev/null || true
-                rm -f dockerfile.env lifecycle-policy.json 2>/dev/null || true
+                rm -f lifecycle-policy.json 2>/dev/null || true
             '''
             
             // Archive artifacts
@@ -497,11 +429,10 @@ EOF
             Build: ${BUILD_NUMBER}
             
             To deploy to EKS:
-            kubectl apply -f kubernetes-files/loadgenerator.yaml
+            kubectl apply -f kubernetes-files/${YAML_FILE}
             
-            To access Locust UI:
-            kubectl port-forward svc/loadgenerator 8089:8089
-            Then open: http://localhost:8089
+            To access service:
+            kubectl port-forward svc/load-generator 5000:8080
             
             Next: Build other microservices or deploy to EKS!
             ====================================
@@ -515,14 +446,15 @@ EOF
             Check logs above for specific error.
             
             Common issues:
-            1. Dockerfile not found
+            1. Dockerfile at ${DOCKERFILE_PATH}/Dockerfile
             2. ECR repository permissions
             3. AWS credentials not configured
+            4. GitHub token permissions
             
             Debug commands:
-            - find . -name "Dockerfile" -type f
-            - ls -la src/loadgenerator/
-            - docker images | grep loadgenerator
+            - ls -la ${DOCKERFILE_PATH}/
+            - aws sts get-caller-identity
+            - docker images | grep ${IMAGE_NAME}
             ====================================
             """
         }
